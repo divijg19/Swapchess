@@ -91,13 +91,21 @@ func ApplyMove(state *GameState, move Move) error {
 		}
 	}
 
-	// Handle promotion: simple default promotion to Queen when a pawn reaches last rank
+	// Handle promotion: use move.Promotion when provided, otherwise default to Queen
 	if movedPiece != nil && movedPiece.Kind == Pawn {
 		if movedPiece.Color == White && move.To.Rank == 7 {
-			movedPiece.Kind = Queen
+			if move.Promotion != 0 {
+				movedPiece.Kind = move.Promotion
+			} else {
+				movedPiece.Kind = Queen
+			}
 		}
 		if movedPiece.Color == Black && move.To.Rank == 0 {
-			movedPiece.Kind = Queen
+			if move.Promotion != 0 {
+				movedPiece.Kind = move.Promotion
+			} else {
+				movedPiece.Kind = Queen
+			}
 		}
 	}
 

@@ -22,6 +22,9 @@ type model struct {
 	history     []*engine.GameState
 	useView     bool
 	pieceAssets map[string]string
+	// promotion flow
+	awaitingPromotion bool
+	pendingMove       engine.Move
 }
 
 func initialModel() model {
@@ -222,8 +225,9 @@ func parseMove(s string) (engine.Move, error) {
 	s = strings.ReplaceAll(s, "-", "")
 	s = strings.ReplaceAll(s, "->", "")
 
-	if len(s) != 4 {
-		return engine.Move{}, fmt.Errorf("invalid move format; expected like e2e4")
+	// allow optional promotion suffix (e.g., e7e8q)
+	if len(s) != 4 && len(s) != 5 {
+		return engine.Move{}, fmt.Errorf("invalid move format; expected like e2e4 or e7e8q")
 	}
 
 	fileOf := func(c byte) (int, error) {
@@ -258,7 +262,22 @@ func parseMove(s string) (engine.Move, error) {
 
 	from := engine.Position{File: f0, Rank: r0}
 	to := engine.Position{File: f1, Rank: r1}
-	return engine.Move{From: from, To: to}, nil
+	mv := engine.Move{From: from, To: to}
+	if len(s) == 5 {
+		switch s[4] {
+		case 'q':
+			mv.Promotion = engine.Queen
+		case 'r':
+			mv.Promotion = engine.Rook
+		case 'b':
+			mv.Promotion = engine.Bishop
+		case 'n':
+			mv.Promotion = engine.Knight
+		default:
+			return engine.Move{}, fmt.Errorf("unknown promotion piece: %c", s[4])
+		}
+	}
+	return mv, nil
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -301,6 +320,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.msg = "Parse error: " + err.Error()
 				return m, nil
 			}
+			// detect pawn promotion that needs a choice
+			piece := m.state.Board.Squares[mv.From.File][mv.From.Rank]
+			if piece != nil && piece.Kind == engine.Pawn {
+				if (piece.Color == engine.White && mv.To.Rank == 7) || (piece.Color == engine.Black && mv.To.Rank == 0) {
+					if mv.Promotion == 0 {
+						// prompt user to choose promotion
+						m.awaitingPromotion = true
+						m.pendingMove = mv
+						m.msg = "Promotion: press q (queen), r (rook), b (bishop), n (knight)"
+						return m, nil
+					}
+				}
+			}
 			// push current state to history
 			m.history = append(m.history, m.state.Clone())
 
@@ -311,6 +343,43 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vi = view.ViewStateFromGameState(m.state)
 			m.msg = "Move applied"
 			return m, nil
+		}
+		// promotion choice handling
+		if m.awaitingPromotion {
+			k := strings.ToLower(msg.String())
+			switch k {
+			case "q", "r", "b", "n":
+				var pk engine.PieceKind
+				switch k {
+				case "q":
+					pk = engine.Queen
+				case "r":
+					pk = engine.Rook
+				case "b":
+					pk = engine.Bishop
+				case "n":
+					pk = engine.Knight
+				}
+				m.pendingMove.Promotion = pk
+				// push history and apply
+				m.history = append(m.history, m.state.Clone())
+				if err := engine.ApplyMove(m.state, m.pendingMove); err != nil {
+					m.msg = "Illegal promotion move: " + err.Error()
+					m.awaitingPromotion = false
+					return m, nil
+				}
+				m.vi = view.ViewStateFromGameState(m.state)
+				m.msg = "Promotion applied"
+				m.awaitingPromotion = false
+				return m, nil
+			case "c", "esc":
+				m.awaitingPromotion = false
+				m.msg = "Promotion cancelled"
+				return m, nil
+			default:
+				m.msg = "Choose promotion: q/r/b/n"
+				return m, nil
+			}
 		}
 	}
 
