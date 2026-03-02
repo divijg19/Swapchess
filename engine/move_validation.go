@@ -65,70 +65,70 @@ func isLegalMove(state *GameState, move Move) bool {
 		if piece.Color == White {
 			// forward one to empty
 			if df == 0 && dr == 1 && dest == nil {
-				return true
+				return !wouldLeaveKingInCheck(state, move)
 			}
 			// initial double move from rank 1 to rank 3
 			if df == 0 && dr == 2 && move.From.Rank == 1 && dest == nil {
 				// ensure intermediate square is clear
 				mid := Position{File: move.From.File, Rank: move.From.Rank + 1}
 				if state.Board.Squares[mid.File][mid.Rank] == nil {
-					return true
+					return !wouldLeaveKingInCheck(state, move)
 				}
 			}
 			// captures (including en passant)
 			if adf == 1 && dr == 1 {
 				if dest != nil && dest.Color == Black {
-					return true
+					return !wouldLeaveKingInCheck(state, move)
 				}
 				if dest == nil && state.HasEnPassant && move.To == state.EnPassant {
-					return true
+					return !wouldLeaveKingInCheck(state, move)
 				}
 			}
 		} else {
 			if df == 0 && dr == -1 && dest == nil {
-				return true
+				return !wouldLeaveKingInCheck(state, move)
 			}
 			// initial double move for black from rank 6 to rank 4
 			if df == 0 && dr == -2 && move.From.Rank == 6 && dest == nil {
 				mid := Position{File: move.From.File, Rank: move.From.Rank - 1}
 				if state.Board.Squares[mid.File][mid.Rank] == nil {
-					return true
+					return !wouldLeaveKingInCheck(state, move)
 				}
 			}
 			if adf == 1 && dr == -1 {
 				if dest != nil && dest.Color == White {
-					return true
+					return !wouldLeaveKingInCheck(state, move)
 				}
 				if dest == nil && state.HasEnPassant && move.To == state.EnPassant {
-					return true
+					return !wouldLeaveKingInCheck(state, move)
 				}
 			}
 		}
 		return false
 	case Knight:
 		if (adf == 2 && adr == 1) || (adf == 1 && adr == 2) {
-			return true
+			return !wouldLeaveKingInCheck(state, move)
 		}
 		return false
 	case Bishop:
 		if adf == adr && adf > 0 && pathClearBetween(move.From, move.To) {
-			return true
+			return !wouldLeaveKingInCheck(state, move)
 		}
 		return false
 	case Rook:
 		if (df == 0 || dr == 0) && (adf+adr > 0) && pathClearBetween(move.From, move.To) {
-			return true
+			return !wouldLeaveKingInCheck(state, move)
 		}
 		return false
 	case Queen:
 		if ((df == 0 || dr == 0) || (adf == adr)) && (adf+adr > 0) && pathClearBetween(move.From, move.To) {
-			return true
+			return !wouldLeaveKingInCheck(state, move)
 		}
 		return false
 	case King:
 		// normal one-square king move
 		if adf <= 1 && adr <= 1 {
-			return true
+			return !wouldLeaveKingInCheck(state, move)
 		}
 
 		// castling: king moves two squares horizontally
@@ -160,7 +160,7 @@ func isLegalMove(state *GameState, move Move) bool {
 					if squareAttacked(state, move.From, opposite(state.Turn)) || squareAttacked(state, mid, opposite(state.Turn)) || squareAttacked(state, destPos, opposite(state.Turn)) {
 						return false
 					}
-					return true
+					return !wouldLeaveKingInCheck(state, move)
 				case -2:
 					// queen-side
 					if !state.WhiteCanCastleQueenSide {
@@ -179,7 +179,7 @@ func isLegalMove(state *GameState, move Move) bool {
 					if squareAttacked(state, move.From, opposite(state.Turn)) || squareAttacked(state, mid1, opposite(state.Turn)) || squareAttacked(state, destPos, opposite(state.Turn)) {
 						return false
 					}
-					return true
+					return !wouldLeaveKingInCheck(state, move)
 				}
 			} else {
 				// black
@@ -204,7 +204,7 @@ func isLegalMove(state *GameState, move Move) bool {
 					if squareAttacked(state, move.From, opposite(state.Turn)) || squareAttacked(state, mid, opposite(state.Turn)) || squareAttacked(state, destPos, opposite(state.Turn)) {
 						return false
 					}
-					return true
+					return !wouldLeaveKingInCheck(state, move)
 				case -2:
 					if !state.BlackCanCastleQueenSide {
 						return false
@@ -222,7 +222,7 @@ func isLegalMove(state *GameState, move Move) bool {
 					if squareAttacked(state, move.From, opposite(state.Turn)) || squareAttacked(state, mid1, opposite(state.Turn)) || squareAttacked(state, destPos, opposite(state.Turn)) {
 						return false
 					}
-					return true
+					return !wouldLeaveKingInCheck(state, move)
 				}
 			}
 		}
@@ -230,4 +230,73 @@ func isLegalMove(state *GameState, move Move) bool {
 	}
 
 	return false
+}
+
+func wouldLeaveKingInCheck(state *GameState, move Move) bool {
+	mover := state.Turn
+	opp := opposite(mover)
+
+	// Simulate only the board effects needed to evaluate king safety.
+	sim := state.Clone()
+	movedPiece := sim.Board.Squares[move.From.File][move.From.Rank]
+	if movedPiece == nil {
+		return true
+	}
+
+	dest := sim.Board.Squares[move.To.File][move.To.Rank]
+	isEnPassantCapture := movedPiece.Kind == Pawn && dest == nil && sim.HasEnPassant && move.To == sim.EnPassant
+	isCastling := movedPiece.Kind == King && move.From.Rank == move.To.Rank && (move.To.File-move.From.File == 2 || move.To.File-move.From.File == -2)
+
+	// Move the main piece.
+	sim.Board.Squares[move.To.File][move.To.Rank] = movedPiece
+	sim.Board.Squares[move.From.File][move.From.Rank] = nil
+
+	// En passant removes the pawn being passed.
+	if isEnPassantCapture {
+		captured := Position{File: move.To.File, Rank: move.From.Rank}
+		sim.Board.Squares[captured.File][captured.Rank] = nil
+	}
+
+	// Castling moves the rook as well.
+	if isCastling {
+		if mover == White {
+			if move.To.File-move.From.File == 2 {
+				rook := sim.Board.Squares[7][0]
+				sim.Board.Squares[5][0] = rook
+				sim.Board.Squares[7][0] = nil
+			} else {
+				rook := sim.Board.Squares[0][0]
+				sim.Board.Squares[3][0] = rook
+				sim.Board.Squares[0][0] = nil
+			}
+		} else {
+			if move.To.File-move.From.File == 2 {
+				rook := sim.Board.Squares[7][7]
+				sim.Board.Squares[5][7] = rook
+				sim.Board.Squares[7][7] = nil
+			} else {
+				rook := sim.Board.Squares[0][7]
+				sim.Board.Squares[3][7] = rook
+				sim.Board.Squares[0][7] = nil
+			}
+		}
+	}
+
+	kingPos, ok := findKingPosition(sim, mover)
+	if !ok {
+		return true
+	}
+	return squareAttacked(sim, kingPos, opp)
+}
+
+func findKingPosition(state *GameState, color Color) (Position, bool) {
+	for f := 0; f < 8; f++ {
+		for r := 0; r < 8; r++ {
+			p := state.Board.Squares[f][r]
+			if p != nil && p.Color == color && p.Kind == King {
+				return Position{File: f, Rank: r}, true
+			}
+		}
+	}
+	return Position{}, false
 }

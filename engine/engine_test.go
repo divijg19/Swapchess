@@ -10,6 +10,9 @@ func TestCheckMoveSuppressesSwap(t *testing.T) {
 	state := &GameState{Turn: White, RandSeed: 1}
 	// empty board by zero value
 
+	// White king (required for move legality)
+	state.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
+
 	// White rook at a2 (file 0, rank 1)
 	state.Board.Squares[0][1] = &Piece{Kind: Rook, Color: White}
 	// Another white piece that could be swapped with (c3)
@@ -44,6 +47,7 @@ func TestCheckMoveSuppressesSwap(t *testing.T) {
 func TestCheckmateDoesNotSuppressSwap(t *testing.T) {
 	// Arrange: use a simple check move (treating checkmate similar)
 	state := &GameState{Turn: White, RandSeed: 7}
+	state.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// White queen at d2
 	state.Board.Squares[3][1] = &Piece{Kind: Queen, Color: White}
 	// Another white piece at f3
@@ -71,6 +75,7 @@ func TestCheckmateDoesNotSuppressSwap(t *testing.T) {
 func TestNonCheckMoveAllowsSwap(t *testing.T) {
 	// Arrange: simple position where White moves a rook but does not give check.
 	state := &GameState{Turn: White, RandSeed: 1}
+	state.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 
 	// White rook at a2
 	state.Board.Squares[0][1] = &Piece{Kind: Rook, Color: White}
@@ -87,15 +92,21 @@ func TestNonCheckMoveAllowsSwap(t *testing.T) {
 		t.Fatalf("ApplyMove returned error: %v", err)
 	}
 
-	// Assert: swap should have occurred because the move did not deliver check
+	// Assert: swap should have occurred because the move did not deliver check.
+	// Note: the king is also a same-color swap candidate, so we don't assert an exact target.
 	dest := state.Board.Squares[move.To.File][move.To.Rank]
-	if dest == nil || dest.Color != White || dest.Kind != Knight {
-		t.Fatalf("expected destination to hold the other white piece (swap occurred); got %+v", dest)
+	if dest == nil || dest.Color != White {
+		t.Fatalf("expected a white piece at destination after move; got %+v", dest)
+	}
+	if dest.Kind == Rook {
+		t.Fatalf("expected moved rook to have swapped away from destination; got %+v", dest)
 	}
 
-	other := state.Board.Squares[otherPos.File][otherPos.Rank]
-	if other == nil || other.Color != White || other.Kind != Rook {
-		t.Fatalf("expected moved rook to be at %v after swap; got %+v", otherPos, other)
+	kingHome := Position{File: 4, Rank: 0}
+	rookAtOther := state.Board.Squares[otherPos.File][otherPos.Rank]
+	rookAtKingHome := state.Board.Squares[kingHome.File][kingHome.Rank]
+	if !((rookAtOther != nil && rookAtOther.Kind == Rook && rookAtOther.Color == White) || (rookAtKingHome != nil && rookAtKingHome.Kind == Rook && rookAtKingHome.Color == White)) {
+		t.Fatalf("expected moved rook to end up on a swap candidate square")
 	}
 
 	if state.SuppressNextSwap {
@@ -106,6 +117,7 @@ func TestNonCheckMoveAllowsSwap(t *testing.T) {
 func TestDeterministicSwap(t *testing.T) {
 	// Arrange: same position and same RandSeed should produce identical swap outcome
 	base := &GameState{Turn: White, RandSeed: 42}
+	base.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// White rook at a2
 	base.Board.Squares[0][1] = &Piece{Kind: Rook, Color: White}
 	// Another white piece at c3
@@ -149,6 +161,7 @@ func TestDeterministicSwap(t *testing.T) {
 func TestSuppressConsumedOnOpponentMove(t *testing.T) {
 	// Arrange: simulate that previous player set SuppressNextSwap, now opponent moves
 	state := &GameState{Turn: Black, RandSeed: 1, SuppressNextSwap: true}
+	state.Board.Squares[4][7] = &Piece{Kind: King, Color: Black}
 	// Black rook at a7 (file 0, rank 6)
 	state.Board.Squares[0][6] = &Piece{Kind: Rook, Color: Black}
 	// Another black piece at c7 (file 2, rank 6)
@@ -180,6 +193,7 @@ func TestSuppressConsumedOnOpponentMove(t *testing.T) {
 func TestSuppressNextSwapResetsAfterMove(t *testing.T) {
 	// Arrange: SuppressNextSwap is set and the side to move is the one that should consume it
 	state := &GameState{Turn: Black, RandSeed: 3, SuppressNextSwap: true}
+	state.Board.Squares[4][7] = &Piece{Kind: King, Color: Black}
 	// Black bishop at c7
 	state.Board.Squares[2][6] = &Piece{Kind: Bishop, Color: Black}
 	// Another black piece at e7
@@ -211,6 +225,7 @@ func TestSuppressNextSwapResetsAfterMove(t *testing.T) {
 func TestRandomnessOfSwap(t *testing.T) {
 	// Arrange: create multiple states with different seeds and record destinations
 	base := &GameState{Turn: White}
+	base.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	base.Board.Squares[0][1] = &Piece{Kind: Rook, Color: White}
 	base.Board.Squares[1][1] = &Piece{Kind: Knight, Color: White}
 	base.Board.Squares[2][1] = &Piece{Kind: Bishop, Color: White}
@@ -240,6 +255,7 @@ func TestRandomnessOfSwap(t *testing.T) {
 func TestSwapDoesNotAffectCheckStatus(t *testing.T) {
 	// Arrange: move that gives check; after swap the opponent should remain in check
 	state := &GameState{Turn: White, RandSeed: 5}
+	state.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// White rook at a2
 	state.Board.Squares[0][1] = &Piece{Kind: Rook, Color: White}
 	// Other white piece at c3
@@ -261,6 +277,7 @@ func TestSwapDoesNotAffectCheckStatus(t *testing.T) {
 func TestEdgeCaseStalemateWithSuppressSwap(t *testing.T) {
 	// Arrange: ensure that when SuppressNextSwap is true, ApplyMove does not swap pieces
 	state := &GameState{Turn: White, RandSeed: 9, SuppressNextSwap: true}
+	state.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	state.Board.Squares[0][1] = &Piece{Kind: Pawn, Color: White}
 	other := Position{File: 1, Rank: 1}
 	state.Board.Squares[other.File][other.Rank] = &Piece{Kind: Knight, Color: White}
@@ -279,6 +296,7 @@ func TestEdgeCaseStalemateWithSuppressSwap(t *testing.T) {
 func TestEdgeCaseInsufficientMaterialWithSuppressSwap(t *testing.T) {
 	// Arrange: when SuppressNextSwap is true, moves should not cause swaps
 	state := &GameState{Turn: Black, RandSeed: 2, SuppressNextSwap: true}
+	state.Board.Squares[4][7] = &Piece{Kind: King, Color: Black}
 	state.Board.Squares[0][6] = &Piece{Kind: Pawn, Color: Black}
 	other := Position{File: 2, Rank: 6}
 	state.Board.Squares[other.File][other.Rank] = &Piece{Kind: Bishop, Color: Black}
@@ -300,7 +318,7 @@ func TestMultipleConsecutiveChecks(t *testing.T) {
 	s.Board.Squares[0][1] = &Piece{Kind: Rook, Color: White}
 	s.Board.Squares[0][7] = &Piece{Kind: King, Color: Black}
 	s.Board.Squares[7][6] = &Piece{Kind: Rook, Color: Black}
-	s.Board.Squares[7][0] = &Piece{Kind: King, Color: White}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 
 	mv1 := Move{From: Position{File: 0, Rank: 1}, To: Position{File: 0, Rank: 6}} // a2->a7 (white gives check)
 	if err := ApplyMove(s, mv1); err != nil {
@@ -309,8 +327,8 @@ func TestMultipleConsecutiveChecks(t *testing.T) {
 	if !s.SuppressNextSwap {
 		t.Fatalf("expected SuppressNextSwap after first check")
 	}
-	// consume on black move
-	mv2 := Move{From: Position{File: 7, Rank: 6}, To: Position{File: 6, Rank: 6}} // h7->g7 (non-check)
+	// consume on black move (must be a legal response to check)
+	mv2 := Move{From: Position{File: 0, Rank: 7}, To: Position{File: 1, Rank: 7}} // a8->b8
 	if err := ApplyMove(s, mv2); err != nil {
 		t.Fatalf("ApplyMove mv2 error: %v", err)
 	}
@@ -322,6 +340,7 @@ func TestMultipleConsecutiveChecks(t *testing.T) {
 func TestSwapAfterPromotionWithSuppressSwap(t *testing.T) {
 	// Arrange: pawn promotion that gives check should set suppression
 	s := &GameState{Turn: White, RandSeed: 11}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// Pawn at a7 ready to promote
 	s.Board.Squares[0][6] = &Piece{Kind: Pawn, Color: White}
 	// other white piece at b7
@@ -342,6 +361,7 @@ func TestSwapAfterPromotionWithSuppressSwap(t *testing.T) {
 func TestSuppressSwapWithThreefoldRepetition(t *testing.T) {
 	// Arrange: when SuppressNextSwap is true, moves should not swap (protecting repetition)
 	s := &GameState{Turn: White, RandSeed: 6, SuppressNextSwap: true}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	s.Board.Squares[0][1] = &Piece{Kind: Rook, Color: White}
 	s.Board.Squares[1][1] = &Piece{Kind: Knight, Color: White}
 	s.Board.Squares[7][7] = &Piece{Kind: King, Color: Black}
@@ -356,6 +376,7 @@ func TestSuppressSwapWithThreefoldRepetition(t *testing.T) {
 func TestSuppressSwapWithFiftyMoveRule(t *testing.T) {
 	// Arrange: ensure SuppressNextSwap prevents swap
 	s := &GameState{Turn: White, RandSeed: 8, SuppressNextSwap: true}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	s.Board.Squares[0][1] = &Piece{Kind: Pawn, Color: White}
 	s.Board.Squares[1][1] = &Piece{Kind: Knight, Color: White}
 	s.Board.Squares[7][7] = &Piece{Kind: King, Color: Black}
@@ -371,6 +392,7 @@ func TestSuppressSwapWithFiftyMoveRule(t *testing.T) {
 func TestSuppressSwapWithEnPassantCapture(t *testing.T) {
 	// Arrange: set up en-passant capture that is legal and would deliver check
 	s := &GameState{Turn: White, RandSeed: 4}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// White pawn at e5 (file 4, rank 4)
 	s.Board.Squares[4][4] = &Piece{Kind: Pawn, Color: White}
 	// Black pawn did double-step to d5 (file 3, rank 4) in previous move: set en passant
@@ -407,6 +429,7 @@ func TestSuppressSwapWithCastlingMove(t *testing.T) {
 
 func TestSuppressSwapWithCheckFromDiscoveredAttack(t *testing.T) {
 	s := &GameState{Turn: White, RandSeed: 2}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// bishop on a1 behind pawn at a2; moving pawn will uncover bishop to king at a8
 	s.Board.Squares[0][0] = &Piece{Kind: Bishop, Color: White}
 	s.Board.Squares[0][1] = &Piece{Kind: Pawn, Color: White}
@@ -422,6 +445,7 @@ func TestSuppressSwapWithCheckFromDiscoveredAttack(t *testing.T) {
 
 func TestSuppressSwapWithCheckFromPinningPiece(t *testing.T) {
 	s := &GameState{Turn: White, RandSeed: 3}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// black king at c8, black knight at b7, white rook at a7 which will move exposing rook to king
 	s.Board.Squares[2][7] = &Piece{Kind: King, Color: Black}
 	s.Board.Squares[1][6] = &Piece{Kind: Knight, Color: Black}
@@ -437,6 +461,7 @@ func TestSuppressSwapWithCheckFromPinningPiece(t *testing.T) {
 
 func TestSuppressSwapWithCheckFromFork(t *testing.T) {
 	s := &GameState{Turn: White, RandSeed: 12}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// white knight will move to fork king and another piece
 	s.Board.Squares[1][0] = &Piece{Kind: Knight, Color: White}
 	s.Board.Squares[2][2] = &Piece{Kind: King, Color: Black}
@@ -451,6 +476,7 @@ func TestSuppressSwapWithCheckFromFork(t *testing.T) {
 }
 func TestSuppressSwapWithCheckFromSkewer(t *testing.T) {
 	s := &GameState{Turn: White, RandSeed: 13}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// setup: white rook moves to skewer king behind a valuable piece
 	s.Board.Squares[0][0] = &Piece{Kind: Rook, Color: White}
 	// clear path up the a-file so the rook can move to a7 and give check to a8
@@ -470,6 +496,7 @@ func TestSuppressSwapWithCheckFromSkewer(t *testing.T) {
 }
 func TestSuppressSwapWithCheckFromDiscoveredCheck(t *testing.T) {
 	s := &GameState{Turn: White, RandSeed: 14}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// bishop behind pawn; moving pawn uncovers check
 	s.Board.Squares[2][0] = &Piece{Kind: Bishop, Color: White}
 	s.Board.Squares[2][1] = &Piece{Kind: Pawn, Color: White}
@@ -484,6 +511,7 @@ func TestSuppressSwapWithCheckFromDiscoveredCheck(t *testing.T) {
 }
 func TestSuppressSwapWithCheckFromDoubleCheck(t *testing.T) {
 	s := &GameState{Turn: White, RandSeed: 15}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	// create a double check by moving piece to reveal and give direct check
 	s.Board.Squares[0][1] = &Piece{Kind: Pawn, Color: White}
 	s.Board.Squares[1][0] = &Piece{Kind: Bishop, Color: White}
@@ -500,6 +528,7 @@ func TestSuppressSwapWithCheckFromDoubleCheck(t *testing.T) {
 func TestPromotionRespectsMovePromotionField(t *testing.T) {
 	// Arrange: white pawn ready to promote
 	s := &GameState{Turn: White}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	s.Board.Squares[0][6] = &Piece{Kind: Pawn, Color: White} // a7
 	s.Board.Squares[7][7] = &Piece{Kind: King, Color: Black}
 
@@ -515,6 +544,7 @@ func TestPromotionRespectsMovePromotionField(t *testing.T) {
 
 	// Reset and test default (no Promotion -> Queen)
 	s = &GameState{Turn: White}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
 	s.Board.Squares[1][6] = &Piece{Kind: Pawn, Color: White} // b7
 	s.Board.Squares[7][7] = &Piece{Kind: King, Color: Black}
 	mv2 := Move{From: Position{File: 1, Rank: 6}, To: Position{File: 1, Rank: 7}}
@@ -524,5 +554,88 @@ func TestPromotionRespectsMovePromotionField(t *testing.T) {
 	p2 := s.Board.Squares[1][7]
 	if p2 == nil || p2.Kind != Queen || p2.Color != White {
 		t.Fatalf("expected promoted queen at b8 by default; got %+v", p2)
+	}
+}
+
+func TestIllegalMoveThatLeavesOwnKingInCheck_IsRejected(t *testing.T) {
+	// White rook on e2 is shielding the king from a black rook on e8.
+	s := &GameState{Turn: White, RandSeed: 1}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White} // e1
+	s.Board.Squares[4][1] = &Piece{Kind: Rook, Color: White} // e2
+	s.Board.Squares[4][7] = &Piece{Kind: Rook, Color: Black} // e8
+	s.Board.Squares[7][7] = &Piece{Kind: King, Color: Black} // h8
+
+	mv := Move{From: Position{File: 4, Rank: 1}, To: Position{File: 3, Rank: 1}} // e2->d2 (exposes e-file)
+	if err := ApplyMove(s, mv); err == nil {
+		t.Fatalf("expected illegal move (self-check), but ApplyMove succeeded")
+	}
+}
+
+func TestKingCannotMoveIntoCheck(t *testing.T) {
+	s := &GameState{Turn: White, RandSeed: 1}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White} // e1
+	s.Board.Squares[4][7] = &Piece{Kind: Rook, Color: Black} // e8
+	s.Board.Squares[7][7] = &Piece{Kind: King, Color: Black}
+
+	mv := Move{From: Position{File: 4, Rank: 0}, To: Position{File: 4, Rank: 1}} // e1->e2
+	if err := ApplyMove(s, mv); err == nil {
+		t.Fatalf("expected illegal king move into check, but ApplyMove succeeded")
+	}
+}
+
+func TestIsCheckmate_BasicCornerMate(t *testing.T) {
+	// Black to move, checkmated by queen + king.
+	s := &GameState{Turn: Black}
+	s.Board.Squares[0][7] = &Piece{Kind: King, Color: Black}  // a8
+	s.Board.Squares[1][6] = &Piece{Kind: Queen, Color: White} // b7
+	s.Board.Squares[2][5] = &Piece{Kind: King, Color: White}  // c6
+
+	if !IsCheckmate(s) {
+		t.Fatalf("expected checkmate")
+	}
+	if IsStalemate(s) {
+		t.Fatalf("did not expect stalemate")
+	}
+}
+
+func TestIsStalemate_BasicCornerStalemate(t *testing.T) {
+	// Black to move, stalemated by queen + king.
+	s := &GameState{Turn: Black}
+	s.Board.Squares[0][7] = &Piece{Kind: King, Color: Black}  // a8
+	s.Board.Squares[1][5] = &Piece{Kind: Queen, Color: White} // b6
+	s.Board.Squares[2][5] = &Piece{Kind: King, Color: White}  // c6
+
+	if IsCheckmate(s) {
+		t.Fatalf("did not expect checkmate")
+	}
+	if !IsStalemate(s) {
+		t.Fatalf("expected stalemate")
+	}
+}
+
+func TestIsInCheck_DetectsAndClears(t *testing.T) {
+	s := &GameState{Turn: White}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White} // e1
+	s.Board.Squares[4][7] = &Piece{Kind: Rook, Color: Black} // e8
+	s.Board.Squares[7][7] = &Piece{Kind: King, Color: Black}
+
+	if !IsInCheck(s, White) {
+		t.Fatalf("expected white to be in check")
+	}
+
+	// Block the file with a white rook at e2.
+	s.Board.Squares[4][1] = &Piece{Kind: Rook, Color: White}
+	if IsInCheck(s, White) {
+		t.Fatalf("expected white check to be blocked")
+	}
+}
+
+func TestIsCheckmateAndStalemate_NotTriggeredInNormalPosition(t *testing.T) {
+	s := NewGame()
+	if IsCheckmate(s) {
+		t.Fatalf("did not expect checkmate in starting position")
+	}
+	if IsStalemate(s) {
+		t.Fatalf("did not expect stalemate in starting position")
 	}
 }
