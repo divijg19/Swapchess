@@ -46,7 +46,7 @@ func initialModel() model {
 }
 
 func loadPieceAssets(dir string) map[string]string {
-	assets := make(map[string]string)
+	assets := defaultPieceAssets()
 	colors := []struct{ code, name string }{{"w", "white"}, {"b", "black"}}
 	kinds := []string{"pawn", "knight", "bishop", "rook", "queen", "king"}
 	for _, c := range colors {
@@ -66,13 +66,30 @@ func loadPieceAssets(dir string) map[string]string {
 	return assets
 }
 
+func defaultPieceAssets() map[string]string {
+	return map[string]string{
+		"w_pawn":   "♙",
+		"w_knight": "♘",
+		"w_bishop": "♗",
+		"w_rook":   "♖",
+		"w_queen":  "♕",
+		"w_king":   "♔",
+		"b_pawn":   "♟",
+		"b_knight": "♞",
+		"b_bishop": "♝",
+		"b_rook":   "♜",
+		"b_queen":  "♛",
+		"b_king":   "♚",
+	}
+}
+
 func (m model) Init() tea.Cmd {
 	return textinput.Blink
 }
 
 func pieceGlyphFromPiece(p *engine.Piece, assets map[string]string) string {
 	if p == nil {
-		return "."
+		return "·"
 	}
 	kind := "?"
 	switch p.Kind {
@@ -119,35 +136,48 @@ func pieceGlyphFromPiece(p *engine.Piece, assets map[string]string) string {
 	return string(ch)
 }
 
+func emptySquareGlyph(file, rank int) string {
+	if (file+rank)%2 == 0 {
+		return "·"
+	}
+	return "◦"
+}
+
+func renderBoardGrid(cells [8][8]string) string {
+	out := "    a   b   c   d   e   f   g   h\n"
+	out += "  +---+---+---+---+---+---+---+---+\n"
+	for rank := 7; rank >= 0; rank-- {
+		out += fmt.Sprintf("%d |", rank+1)
+		for file := 0; file < 8; file++ {
+			out += fmt.Sprintf(" %s |", cells[rank][file])
+		}
+		out += fmt.Sprintf(" %d\n", rank+1)
+		out += "  +---+---+---+---+---+---+---+---+\n"
+	}
+	out += "    a   b   c   d   e   f   g   h\n"
+	return out
+}
+
 func renderBoard(s *engine.GameState, assets map[string]string) string {
 	var b [8][8]string
 	for f := 0; f < 8; f++ {
 		for r := 0; r < 8; r++ {
 			p := s.Board.Squares[f][r]
 			if p == nil {
-				b[r][f] = "."
+				b[r][f] = emptySquareGlyph(f, r)
 				continue
 			}
 			b[r][f] = pieceGlyphFromPiece(p, assets)
 		}
 	}
-	out := ""
-	for rank := 7; rank >= 0; rank-- {
-		out += fmt.Sprintf("%d ", rank+1)
-		for file := 0; file < 8; file++ {
-			out += b[rank][file] + " "
-		}
-		out += "\n"
-	}
-	out += "  a b c d e f g h\n"
-	return out
+	return renderBoardGrid(b)
 }
 
 func renderBoardFromView(v view.ViewState, assets map[string]string) string {
 	var b [8][8]string
 	for r := 0; r < 8; r++ {
 		for f := 0; f < 8; f++ {
-			b[r][f] = "."
+			b[r][f] = emptySquareGlyph(f, r)
 		}
 	}
 	for _, vp := range v.Pieces {
@@ -172,7 +202,7 @@ func renderBoardFromView(v view.ViewState, assets map[string]string) string {
 			colorCode = "w"
 		}
 		key := fmt.Sprintf("%s_%s", colorCode, kind)
-		glyph := "."
+		glyph := emptySquareGlyph(vp.X, vp.Y)
 		if g, ok := assets[key]; ok {
 			glyph = g
 		} else {
@@ -202,16 +232,7 @@ func renderBoardFromView(v view.ViewState, assets map[string]string) string {
 			b[vp.Y][vp.X] = glyph
 		}
 	}
-	out := ""
-	for rank := 7; rank >= 0; rank-- {
-		out += fmt.Sprintf("%d ", rank+1)
-		for file := 0; file < 8; file++ {
-			out += b[rank][file] + " "
-		}
-		out += "\n"
-	}
-	out += "  a b c d e f g h\n"
-	return out
+	return renderBoardGrid(b)
 }
 
 func parseMove(s string) (engine.Move, error) {
@@ -222,8 +243,8 @@ func parseMove(s string) (engine.Move, error) {
 	// normalize common separators and casing
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "")
-	s = strings.ReplaceAll(s, "-", "")
 	s = strings.ReplaceAll(s, "->", "")
+	s = strings.ReplaceAll(s, "-", "")
 
 	// allow optional promotion suffix (e.g., e7e8q)
 	if len(s) != 4 && len(s) != 5 {
@@ -333,13 +354,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
-			// push current state to history
-			m.history = append(m.history, m.state.Clone())
-
+			prev := m.state.Clone()
 			if err := engine.ApplyMove(m.state, mv); err != nil {
 				m.msg = "Illegal move: " + err.Error()
 				return m, nil
 			}
+			m.history = append(m.history, prev)
 			m.vi = view.ViewStateFromGameState(m.state)
 			m.msg = "Move applied"
 			return m, nil
@@ -361,13 +381,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					pk = engine.Knight
 				}
 				m.pendingMove.Promotion = pk
-				// push history and apply
-				m.history = append(m.history, m.state.Clone())
+				prev := m.state.Clone()
 				if err := engine.ApplyMove(m.state, m.pendingMove); err != nil {
 					m.msg = "Illegal promotion move: " + err.Error()
 					m.awaitingPromotion = false
 					return m, nil
 				}
+				m.history = append(m.history, prev)
 				m.vi = view.ViewStateFromGameState(m.state)
 				m.msg = "Promotion applied"
 				m.awaitingPromotion = false
@@ -389,14 +409,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	out := "SwapChess TUI\n"
+	out := "SwapChess TUI\n\n"
 	if m.useView {
 		out += renderBoardFromView(m.vi, m.pieceAssets)
 	} else {
 		out += renderBoard(m.state, m.pieceAssets)
 	}
-	out += "Turn: " + m.state.Turn.String() + "\n"
-	out += "\n"
+
+	status := "in play"
+	if engine.IsCheckmate(m.state) {
+		status = "checkmate"
+	} else if engine.IsStalemate(m.state) {
+		status = "stalemate"
+	} else if engine.IsInCheck(m.state, m.state.Turn) {
+		status = "check"
+	}
+
+	out += fmt.Sprintf("Turn: %s  |  Status: %s  |  Renderer: %s\n", m.state.Turn.String(), status, map[bool]string{true: "view", false: "engine"}[m.useView])
+	out += "Commands: Enter=apply  u=undo  r=toggle renderer  esc=quit\n\n"
 	out += m.msg + "\n"
 	out += m.input.View()
 	return out

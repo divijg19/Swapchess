@@ -64,7 +64,8 @@ Planned milestones:
 
 ```
 engine/   → Pure chess + `Swapchess` rules (no UI dependencies)
-ui/       → Rendering & input layers
+view/     → Render-agnostic game-to-view mapping
+cmd/      → Rendering & input layers
   ├─ tui/ → Bubble Tea terminal interface
   └─ gfx/ → Ebiten native 2D renderer
 assets/   → Embedded piece & board art
@@ -85,6 +86,8 @@ assets/   → Embedded piece & board art
 
 * Built with **Bubble Tea**
 * Keyboard-driven
+* Unicode piece rendering with file-based asset overrides from `assets/pieces`
+* Board coordinates, check/checkmate/stalemate status line, move undo
 * Used for rule validation and fast iteration
 
 ### Native 2D UI
