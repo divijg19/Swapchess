@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"github.com/divijg19/Swapchess/engine"
+	"github.com/divijg19/Swapchess/internal/pieces"
 	"github.com/divijg19/Swapchess/view"
 )
 
@@ -21,7 +22,7 @@ type model struct {
 	msg         string
 	history     []*engine.GameState
 	useView     bool
-	pieceAssets map[string]string
+	pieceCatalog *pieces.Catalog
 	// promotion flow
 	awaitingPromotion bool
 	pendingMove       engine.Move
@@ -40,100 +41,12 @@ func initialModel() model {
 	m.input.CharLimit = 10
 	m.input.Width = 20
 	m.msg = "Type moves like e2e4 and press Enter"
-	// load piece glyph assets (optional); fallback to letters if missing
-	m.pieceAssets = loadPieceAssets(filepath.Join("assets", "pieces"))
+	m.pieceCatalog = pieces.NewCatalog(filepath.Join("assets", "pieces"))
 	return m
-}
-
-func loadPieceAssets(dir string) map[string]string {
-	assets := defaultPieceAssets()
-	colors := []struct{ code, name string }{{"w", "white"}, {"b", "black"}}
-	kinds := []string{"pawn", "knight", "bishop", "rook", "queen", "king"}
-	for _, c := range colors {
-		for _, k := range kinds {
-			fname := filepath.Join(dir, fmt.Sprintf("%s_%s.txt", c.name, k))
-			data, err := os.ReadFile(fname)
-			if err != nil {
-				continue
-			}
-			s := strings.TrimSpace(string(data))
-			if s == "" {
-				continue
-			}
-			assets[fmt.Sprintf("%s_%s", c.code, k)] = s
-		}
-	}
-	return assets
-}
-
-func defaultPieceAssets() map[string]string {
-	return map[string]string{
-		"w_pawn":   "♙",
-		"w_knight": "♘",
-		"w_bishop": "♗",
-		"w_rook":   "♖",
-		"w_queen":  "♕",
-		"w_king":   "♔",
-		"b_pawn":   "♟",
-		"b_knight": "♞",
-		"b_bishop": "♝",
-		"b_rook":   "♜",
-		"b_queen":  "♛",
-		"b_king":   "♚",
-	}
 }
 
 func (m model) Init() tea.Cmd {
 	return textinput.Blink
-}
-
-func pieceGlyphFromPiece(p *engine.Piece, assets map[string]string) string {
-	if p == nil {
-		return "·"
-	}
-	kind := "?"
-	switch p.Kind {
-	case engine.Pawn:
-		kind = "pawn"
-	case engine.Knight:
-		kind = "knight"
-	case engine.Bishop:
-		kind = "bishop"
-	case engine.Rook:
-		kind = "rook"
-	case engine.Queen:
-		kind = "queen"
-	case engine.King:
-		kind = "king"
-	}
-	colorCode := "b"
-	if p.Color == engine.White {
-		colorCode = "w"
-	}
-	key := fmt.Sprintf("%s_%s", colorCode, kind)
-	if g, ok := assets[key]; ok {
-		return g
-	}
-	// fallback single-letter glyph
-	ch := '?'
-	switch p.Kind {
-	case engine.Pawn:
-		ch = 'p'
-	case engine.Knight:
-		ch = 'n'
-	case engine.Bishop:
-		ch = 'b'
-	case engine.Rook:
-		ch = 'r'
-	case engine.Queen:
-		ch = 'q'
-	case engine.King:
-		ch = 'k'
-	}
-	if p.Color == engine.White {
-		return strings.ToUpper(string(ch))
-	}
-	return string(ch)
 }
 
 func emptySquareGlyph(file, rank int) string {
@@ -158,7 +71,7 @@ func renderBoardGrid(cells [8][8]string) string {
 	return out
 }
 
-func renderBoard(s *engine.GameState, assets map[string]string) string {
+func renderBoard(s *engine.GameState, catalog *pieces.Catalog) string {
 	var b [8][8]string
 	for f := 0; f < 8; f++ {
 		for r := 0; r < 8; r++ {
@@ -167,13 +80,13 @@ func renderBoard(s *engine.GameState, assets map[string]string) string {
 				b[r][f] = emptySquareGlyph(f, r)
 				continue
 			}
-			b[r][f] = pieceGlyphFromPiece(p, assets)
+			b[r][f] = catalog.Glyph(p)
 		}
 	}
 	return renderBoardGrid(b)
 }
 
-func renderBoardFromView(v view.ViewState, assets map[string]string) string {
+func renderBoardFromView(v view.ViewState, catalog *pieces.Catalog) string {
 	var b [8][8]string
 	for r := 0; r < 8; r++ {
 		for f := 0; f < 8; f++ {
@@ -181,53 +94,7 @@ func renderBoardFromView(v view.ViewState, assets map[string]string) string {
 		}
 	}
 	for _, vp := range v.Pieces {
-		// map view piece to glyph
-		kind := "?"
-		switch vp.Kind {
-		case engine.Pawn:
-			kind = "pawn"
-		case engine.Knight:
-			kind = "knight"
-		case engine.Bishop:
-			kind = "bishop"
-		case engine.Rook:
-			kind = "rook"
-		case engine.Queen:
-			kind = "queen"
-		case engine.King:
-			kind = "king"
-		}
-		colorCode := "b"
-		if vp.Color == engine.White {
-			colorCode = "w"
-		}
-		key := fmt.Sprintf("%s_%s", colorCode, kind)
-		glyph := emptySquareGlyph(vp.X, vp.Y)
-		if g, ok := assets[key]; ok {
-			glyph = g
-		} else {
-			// fallback single-letter
-			ch := '?'
-			switch vp.Kind {
-			case engine.Pawn:
-				ch = 'p'
-			case engine.Knight:
-				ch = 'n'
-			case engine.Bishop:
-				ch = 'b'
-			case engine.Rook:
-				ch = 'r'
-			case engine.Queen:
-				ch = 'q'
-			case engine.King:
-				ch = 'k'
-			}
-			if vp.Color == engine.White {
-				glyph = strings.ToUpper(string(ch))
-			} else {
-				glyph = string(ch)
-			}
-		}
+		glyph := catalog.GlyphFor(vp.Kind, vp.Color)
 		if vp.Y >= 0 && vp.Y < 8 && vp.X >= 0 && vp.X < 8 {
 			b[vp.Y][vp.X] = glyph
 		}
@@ -297,6 +164,7 @@ func parseMove(s string) (engine.Move, error) {
 		default:
 			return engine.Move{}, fmt.Errorf("unknown promotion piece: %c", s[4])
 		}
+		mv.PromotionSet = true
 	}
 	return mv, nil
 }
@@ -304,9 +172,57 @@ func parseMove(s string) (engine.Move, error) {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
-		if msg.Type == tea.KeyCtrlC || msg.Type == tea.KeyEsc {
+		if msg.Type == tea.KeyCtrlC {
 			return m, tea.Quit
 		}
+
+		if m.awaitingPromotion {
+			if msg.Type == tea.KeyEsc {
+				m.awaitingPromotion = false
+				m.msg = "Promotion cancelled"
+				return m, nil
+			}
+			k := strings.ToLower(msg.String())
+			switch k {
+			case "q", "r", "b", "n":
+				var pk engine.PieceKind
+				switch k {
+				case "q":
+					pk = engine.Queen
+				case "r":
+					pk = engine.Rook
+				case "b":
+					pk = engine.Bishop
+				case "n":
+					pk = engine.Knight
+				}
+				m.pendingMove.Promotion = pk
+				m.pendingMove.PromotionSet = true
+				prev := m.state.Clone()
+				if err := engine.ApplyMove(m.state, m.pendingMove); err != nil {
+					m.msg = "Illegal promotion move: " + err.Error()
+					m.awaitingPromotion = false
+					return m, nil
+				}
+				m.history = append(m.history, prev)
+				m.vi = view.ViewStateFromGameState(m.state)
+				m.msg = "Promotion applied"
+				m.awaitingPromotion = false
+				return m, nil
+			case "c":
+				m.awaitingPromotion = false
+				m.msg = "Promotion cancelled"
+				return m, nil
+			default:
+				m.msg = "Choose promotion: q/r/b/n (esc to cancel)"
+				return m, nil
+			}
+		}
+
+		if msg.Type == tea.KeyEsc {
+			return m, tea.Quit
+		}
+
 		if msg.String() == "u" || msg.String() == "U" {
 			// undo
 			if len(m.history) > 0 {
@@ -345,11 +261,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			piece := m.state.Board.Squares[mv.From.File][mv.From.Rank]
 			if piece != nil && piece.Kind == engine.Pawn {
 				if (piece.Color == engine.White && mv.To.Rank == 7) || (piece.Color == engine.Black && mv.To.Rank == 0) {
-					if mv.Promotion == 0 {
+					if !mv.HasExplicitPromotion() {
 						// prompt user to choose promotion
 						m.awaitingPromotion = true
 						m.pendingMove = mv
-						m.msg = "Promotion: press q (queen), r (rook), b (bishop), n (knight)"
+						m.msg = "Promotion: press q (queen), r (rook), b (bishop), n (knight), esc/c to cancel"
 						return m, nil
 					}
 				}
@@ -364,43 +280,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.msg = "Move applied"
 			return m, nil
 		}
-		// promotion choice handling
-		if m.awaitingPromotion {
-			k := strings.ToLower(msg.String())
-			switch k {
-			case "q", "r", "b", "n":
-				var pk engine.PieceKind
-				switch k {
-				case "q":
-					pk = engine.Queen
-				case "r":
-					pk = engine.Rook
-				case "b":
-					pk = engine.Bishop
-				case "n":
-					pk = engine.Knight
-				}
-				m.pendingMove.Promotion = pk
-				prev := m.state.Clone()
-				if err := engine.ApplyMove(m.state, m.pendingMove); err != nil {
-					m.msg = "Illegal promotion move: " + err.Error()
-					m.awaitingPromotion = false
-					return m, nil
-				}
-				m.history = append(m.history, prev)
-				m.vi = view.ViewStateFromGameState(m.state)
-				m.msg = "Promotion applied"
-				m.awaitingPromotion = false
-				return m, nil
-			case "c", "esc":
-				m.awaitingPromotion = false
-				m.msg = "Promotion cancelled"
-				return m, nil
-			default:
-				m.msg = "Choose promotion: q/r/b/n"
-				return m, nil
-			}
-		}
 	}
 
 	var cmd tea.Cmd
@@ -411,9 +290,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) View() string {
 	out := "SwapChess TUI\n\n"
 	if m.useView {
-		out += renderBoardFromView(m.vi, m.pieceAssets)
+		out += renderBoardFromView(m.vi, m.pieceCatalog)
 	} else {
-		out += renderBoard(m.state, m.pieceAssets)
+		out += renderBoard(m.state, m.pieceCatalog)
 	}
 
 	status := "in play"

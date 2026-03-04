@@ -639,3 +639,43 @@ func TestIsCheckmateAndStalemate_NotTriggeredInNormalPosition(t *testing.T) {
 		t.Fatalf("did not expect stalemate in starting position")
 	}
 }
+
+func TestWhiteQueensideCastlingBlockedByBFilePieceIsIllegal(t *testing.T) {
+	s := &GameState{Turn: White, WhiteCanCastleQueenSide: true}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White} // e1
+	s.Board.Squares[0][0] = &Piece{Kind: Rook, Color: White} // a1
+	s.Board.Squares[4][7] = &Piece{Kind: King, Color: Black} // e8
+	// blocker that should make O-O-O illegal
+	s.Board.Squares[1][0] = &Piece{Kind: Knight, Color: White} // b1
+
+	mv := Move{From: Position{File: 4, Rank: 0}, To: Position{File: 2, Rank: 0}} // e1->c1
+	if err := ApplyMove(s, mv); err == nil {
+		t.Fatalf("expected queenside castling to be illegal when b1 is occupied")
+	}
+}
+
+func TestBlackQueensideCastlingBlockedByBFilePieceIsIllegal(t *testing.T) {
+	s := &GameState{Turn: Black, BlackCanCastleQueenSide: true}
+	s.Board.Squares[4][7] = &Piece{Kind: King, Color: Black} // e8
+	s.Board.Squares[0][7] = &Piece{Kind: Rook, Color: Black} // a8
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White} // e1
+	// blocker that should make O-O-O illegal
+	s.Board.Squares[1][7] = &Piece{Kind: Knight, Color: Black} // b8
+
+	mv := Move{From: Position{File: 4, Rank: 7}, To: Position{File: 2, Rank: 7}} // e8->c8
+	if err := ApplyMove(s, mv); err == nil {
+		t.Fatalf("expected queenside castling to be illegal when b8 is occupied")
+	}
+}
+
+func TestInvalidExplicitPromotionChoiceIsIllegal(t *testing.T) {
+	s := &GameState{Turn: White}
+	s.Board.Squares[4][0] = &Piece{Kind: King, Color: White}
+	s.Board.Squares[7][7] = &Piece{Kind: King, Color: Black}
+	s.Board.Squares[0][6] = &Piece{Kind: Pawn, Color: White} // a7
+
+	mv := Move{From: Position{File: 0, Rank: 6}, To: Position{File: 0, Rank: 7}, Promotion: King, PromotionSet: true}
+	if err := ApplyMove(s, mv); err == nil {
+		t.Fatalf("expected invalid explicit promotion to be illegal")
+	}
+}
