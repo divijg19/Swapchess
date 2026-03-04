@@ -60,6 +60,14 @@ func isLegalMove(state *GameState, move Move) bool {
 	adf := abs(df)
 	adr := abs(dr)
 
+	if piece.Kind == Pawn {
+		if (piece.Color == White && move.To.Rank == 7) || (piece.Color == Black && move.To.Rank == 0) {
+			if move.HasExplicitPromotion() && !isValidPromotionKind(move.Promotion) {
+				return false
+			}
+		}
+	}
+
 	switch piece.Kind {
 	case Pawn:
 		if piece.Color == White {
@@ -173,6 +181,10 @@ func isLegalMove(state *GameState, move Move) bool {
 					}
 					mid1 := Position{File: 3, Rank: 0}
 					destPos := move.To
+					// queen-side castling additionally requires b-file square to be empty
+					if state.Board.Squares[1][0] != nil {
+						return false
+					}
 					if !pathClearBetween(move.From, destPos) {
 						return false
 					}
@@ -216,6 +228,10 @@ func isLegalMove(state *GameState, move Move) bool {
 					}
 					mid1 := Position{File: 3, Rank: 7}
 					destPos := move.To
+					// queen-side castling additionally requires b-file square to be empty
+					if state.Board.Squares[1][7] != nil {
+						return false
+					}
 					if !pathClearBetween(move.From, destPos) {
 						return false
 					}
@@ -299,4 +315,13 @@ func findKingPosition(state *GameState, color Color) (Position, bool) {
 		}
 	}
 	return Position{}, false
+}
+
+func isValidPromotionKind(kind PieceKind) bool {
+	switch kind {
+	case Queen, Rook, Bishop, Knight:
+		return true
+	default:
+		return false
+	}
 }

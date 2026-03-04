@@ -91,17 +91,17 @@ func ApplyMove(state *GameState, move Move) error {
 		}
 	}
 
-	// Handle promotion: use move.Promotion when provided, otherwise default to Queen
+	// Handle promotion: use explicit move promotion choice when provided, otherwise default to Queen.
 	if movedPiece != nil && movedPiece.Kind == Pawn {
 		if movedPiece.Color == White && move.To.Rank == 7 {
-			if move.Promotion != 0 {
+			if move.HasExplicitPromotion() {
 				movedPiece.Kind = move.Promotion
 			} else {
 				movedPiece.Kind = Queen
 			}
 		}
 		if movedPiece.Color == Black && move.To.Rank == 0 {
-			if move.Promotion != 0 {
+			if move.HasExplicitPromotion() {
 				movedPiece.Kind = move.Promotion
 			} else {
 				movedPiece.Kind = Queen
