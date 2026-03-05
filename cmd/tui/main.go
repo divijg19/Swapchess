@@ -16,12 +16,12 @@ import (
 
 // simple TUI model
 type model struct {
-	state       *engine.GameState
-	vi          view.ViewState
-	input       textinput.Model
-	msg         string
-	history     []*engine.GameState
-	useView     bool
+	state        *engine.GameState
+	vi           view.ViewState
+	input        textinput.Model
+	msg          string
+	history      []*engine.GameState
+	useView      bool
 	pieceCatalog *pieces.Catalog
 	// promotion flow
 	awaitingPromotion bool
