@@ -1,16 +1,13 @@
-package main
+package cli
 
 import (
-	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
 	textinput "github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/divijg19/Swapchess/cmd/cli"
+
 	"github.com/divijg19/Swapchess/engine"
 	"github.com/divijg19/Swapchess/internal/pieces"
 	"github.com/divijg19/Swapchess/view"
@@ -30,53 +27,33 @@ func (r rendererMode) String() string {
 	return "view"
 }
 
-var (
-	appStyle   = lipgloss.NewStyle().Padding(0, 1)
-	panelStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("63")).
-			Padding(0, 1)
-	headerStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("230")).
-			Background(lipgloss.Color("24")).
-			Padding(0, 1)
-	titleStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("230"))
-	labelStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("110"))
-	mutedStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
-	alertStyle  = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("203"))
-	noticeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("150"))
-)
-
 type model struct {
-	state             *engine.GameState
-	vi                view.ViewState
-	input             textinput.Model
-	msg               string
-	history           []*engine.GameState
-	moveLog           []string
-	renderer          rendererMode
-	pieceCatalog      *pieces.Catalog
-	width             int
-	height            int
+	state        *engine.GameState
+	vi           view.ViewState
+	input        textinput.Model
+	msg          string
+	history      []*engine.GameState
+	renderer     rendererMode
+	pieceCatalog *pieces.Catalog
+	width        int
+	height       int
+	// promotion flow
 	awaitingPromotion bool
 	pendingMove       engine.Move
 }
 
 func initialModel() model {
 	st := engine.NewGame()
-	m := model{
-		state:        st,
-		vi:           view.ViewStateFromGameState(st),
-		renderer:     renderView,
-		pieceCatalog: pieces.NewCatalog(filepath.Join("assets", "pieces")),
-		msg:          "Enter a move like e2e4. Type help for commands.",
-	}
+	m := model{state: st}
+	m.vi = view.ViewStateFromGameState(st)
+	m.renderer = renderView
 	m.input = textinput.New()
 	m.input.Placeholder = "move: e2e4 | commands: help, undo, renderer view|engine, quit"
 	m.input.Focus()
 	m.input.CharLimit = 64
 	m.input.Width = 48
+	m.msg = "Enter a move like e2e4. Type help for commands."
+	m.pieceCatalog = pieces.NewCatalog(filepath.Join("assets", "pieces"))
 	return m
 }
 
@@ -142,13 +119,15 @@ func parseMove(s string) (engine.Move, error) {
 	if s == "" {
 		return engine.Move{}, fmt.Errorf("empty move")
 	}
+	// normalize common separators and casing
 	s = strings.ToLower(s)
 	s = strings.ReplaceAll(s, " ", "")
 	s = strings.ReplaceAll(s, "->", "")
 	s = strings.ReplaceAll(s, "-", "")
 
+	// allow optional promotion suffix (e.g., e7e8q)
 	if len(s) != 4 && len(s) != 5 {
-		return engine.Move{}, fmt.Errorf("invalid move format; expected e2e4 or e7e8q")
+		return engine.Move{}, fmt.Errorf("invalid move format; expected like e2e4 or e7e8q")
 	}
 
 	fileOf := func(c byte) (int, error) {
@@ -181,10 +160,9 @@ func parseMove(s string) (engine.Move, error) {
 		return engine.Move{}, err
 	}
 
-	mv := engine.Move{
-		From: engine.Position{File: f0, Rank: r0},
-		To:   engine.Position{File: f1, Rank: r1},
-	}
+	from := engine.Position{File: f0, Rank: r0}
+	to := engine.Position{File: f1, Rank: r1}
+	mv := engine.Move{From: from, To: to}
 	if len(s) == 5 {
 		switch s[4] {
 		case 'q':
@@ -237,102 +215,14 @@ func promotionChoice(s string) (engine.PieceKind, bool) {
 	}
 }
 
-func statusLine(state *engine.GameState) string {
-	status := "in play"
-	if engine.IsCheckmate(state) {
-		status = "checkmate"
-	} else if engine.IsStalemate(state) {
-		status = "stalemate"
-	} else if engine.IsInCheck(state, state.Turn) {
-		status = "check"
-	}
-	return status
-}
-
-func castlingRightsLine(state *engine.GameState) string {
-	var w, b string
-	if state.WhiteCanCastleKingSide {
-		w += "K"
-	}
-	if state.WhiteCanCastleQueenSide {
-		w += "Q"
-	}
-	if state.BlackCanCastleKingSide {
-		b += "K"
-	}
-	if state.BlackCanCastleQueenSide {
-		b += "Q"
-	}
-	if w == "" {
-		w = "-"
-	}
-	if b == "" {
-		b = "-"
-	}
-	return fmt.Sprintf("White:%s  Black:%s", w, b)
-}
-
-func positionString(p engine.Position) string {
-	return fmt.Sprintf("%c%d", byte('a'+p.File), p.Rank+1)
-}
-
-func trimAndPadLines(s string, maxLines int) string {
-	if maxLines <= 0 {
-		return ""
-	}
-	lines := strings.Split(s, "\n")
-	if len(lines) > maxLines {
-		lines = lines[:maxLines]
-	}
-	for len(lines) < maxLines {
-		lines = append(lines, "")
-	}
-	return strings.Join(lines, "\n")
-}
-
-func panel(title, body string, width, height int) string {
-	head := titleStyle.Render(title)
-	content := head + "\n" + body
-	style := panelStyle
-	if width > 0 {
-		style = style.Width(width)
-	}
-	if height > 0 {
-		content = head + "\n" + trimAndPadLines(body, maxInt(height-1, 1))
-		style = style.Height(height)
-	}
-	return style.Render(content)
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func (m model) recentLog(lines int) string {
-	if len(m.moveLog) == 0 {
-		return mutedStyle.Render("No moves yet.")
-	}
-	start := len(m.moveLog) - lines
-	if start < 0 {
-		start = 0
-	}
-	return strings.Join(m.moveLog[start:], "\n")
-}
-
 func (m model) applyMove(mv engine.Move) model {
 	prev := m.state.Clone()
-	mover := m.state.Turn
 	if err := engine.ApplyMove(m.state, mv); err != nil {
 		m.msg = "Illegal move: " + err.Error()
 		return m
 	}
 	m.history = append(m.history, prev)
 	m.vi = view.ViewStateFromGameState(m.state)
-	moveIndex := len(m.history)
-	m.moveLog = append(m.moveLog, fmt.Sprintf("%02d. %-5s %s", moveIndex, mover.String(), moveString(mv)))
 	m.msg = "Move applied: " + moveString(mv)
 	return m
 }
@@ -340,7 +230,7 @@ func (m model) applyMove(mv engine.Move) model {
 func (m model) submitInput() (model, tea.Cmd) {
 	val := strings.TrimSpace(m.input.Value())
 	if val == "" {
-		m.msg = "Empty input. Enter a move like e2e4 or a command."
+		m.msg = "Empty input. Enter a move like e2e4 or a command (help)."
 		return m, nil
 	}
 	m.input.SetValue("")
@@ -359,9 +249,10 @@ func (m model) submitInput() (model, tea.Cmd) {
 		return m, nil
 	}
 
-	switch strings.ToLower(val) {
+	lower := strings.ToLower(val)
+	switch lower {
 	case "help", "?":
-		m.msg = "Commands: undo|u, renderer view|engine|toggle, clear, quit|exit."
+		m.msg = "Commands: undo|u, renderer view|engine, renderer toggle, quit|exit. Moves: e2e4 or e7e8q."
 		return m, nil
 	case "undo", "u":
 		if len(m.history) == 0 {
@@ -372,12 +263,11 @@ func (m model) submitInput() (model, tea.Cmd) {
 		m.history = m.history[:len(m.history)-1]
 		m.state = last
 		m.vi = view.ViewStateFromGameState(m.state)
-		if len(m.moveLog) > 0 {
-			m.moveLog = m.moveLog[:len(m.moveLog)-1]
-		}
 		m.awaitingPromotion = false
 		m.msg = "Undid last move."
 		return m, nil
+	case "quit", "exit":
+		return m, tea.Quit
 	case "renderer toggle", "render toggle":
 		if m.renderer == renderView {
 			m.renderer = renderEngine
@@ -394,12 +284,6 @@ func (m model) submitInput() (model, tea.Cmd) {
 		m.renderer = renderEngine
 		m.msg = "Renderer: engine"
 		return m, nil
-	case "clear":
-		m.moveLog = nil
-		m.msg = "Move log cleared."
-		return m, nil
-	case "quit", "exit":
-		return m, tea.Quit
 	}
 
 	mv, err := parseMove(val)
@@ -428,7 +312,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		inputWidth := msg.Width - 14
+		inputWidth := msg.Width - 10
 		if inputWidth < 20 {
 			inputWidth = 20
 		}
@@ -455,104 +339,49 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m model) renderMainLayout() string {
-	header := headerStyle.Render("SwapChess | Full TUI")
-
-	status := statusLine(m.state)
-	statusStyled := noticeStyle.Render(status)
-	if status == "checkmate" || status == "stalemate" {
-		statusStyled = alertStyle.Render(status)
+func statusLine(state *engine.GameState) string {
+	status := "in play"
+	if engine.IsCheckmate(state) {
+		status = "checkmate"
+	} else if engine.IsStalemate(state) {
+		status = "stalemate"
+	} else if engine.IsInCheck(state, state.Turn) {
+		status = "check"
 	}
+	return status
+}
 
-	board := renderBoardFromView(m.vi, m.pieceCatalog)
-	if m.renderer == renderEngine {
-		board = renderBoard(m.state, m.pieceCatalog)
+func (m model) renderCLI() string {
+	var out strings.Builder
+	out.WriteString("SwapChess\n\n")
+	if m.renderer == renderView {
+		out.WriteString(renderBoardFromView(m.vi, m.pieceCatalog))
+	} else {
+		out.WriteString(renderBoard(m.state, m.pieceCatalog))
 	}
-
-	ep := "-"
-	if m.state.HasEnPassant {
-		ep = positionString(m.state.EnPassant)
-	}
-
-	gameLines := []string{
-		labelStyle.Render("Turn:") + " " + m.state.Turn.String(),
-		labelStyle.Render("Status:") + " " + statusStyled,
-		labelStyle.Render("Renderer:") + " " + m.renderer.String(),
-		labelStyle.Render("Swap Suppressed:") + " " + fmt.Sprintf("%t", m.state.SuppressNextSwap),
-		labelStyle.Render("En Passant:") + " " + ep,
-		labelStyle.Render("Castling:") + " " + castlingRightsLine(m.state),
-		labelStyle.Render("RNG Seed:") + " " + fmt.Sprintf("%d", m.state.RandSeed),
-	}
-	gameBody := strings.Join(gameLines, "\n")
-
-	commandMode := "move/command"
+	out.WriteString(fmt.Sprintf("Turn: %s  |  Status: %s  |  Renderer: %s\n", m.state.Turn.String(), statusLine(m.state), m.renderer.String()))
 	if m.awaitingPromotion {
-		commandMode = "promotion choice"
+		out.WriteString("Input mode: promotion choice pending (q/r/b/n)\n")
+	} else {
+		out.WriteString("Input mode: move/command\n")
 	}
-
-	commands := strings.Join([]string{
-		"Moves: e2e4, e7e8q",
-		"undo | u",
-		"renderer view | engine | toggle",
-		"clear",
-		"help",
-		"quit | exit",
-	}, "\n")
-
-	rightWidth := 44
-	if m.width > 130 {
-		rightWidth = 48
-	}
-	totalInner := maxInt(m.width-4, 70)
-	leftWidth := totalInner - rightWidth - 1
-	if leftWidth < 41 {
-		leftWidth = 41
-		rightWidth = maxInt(totalInner-leftWidth-1, 28)
-	}
-
-	mainHeight := maxInt(m.height-11, 18)
-	gameHeight := 10
-	cmdHeight := 8
-	logHeight := maxInt(mainHeight-gameHeight-cmdHeight-2, 6)
-
-	boardPanel := panel("Board", board, leftWidth, mainHeight)
-	gamePanel := panel("Game State", gameBody, rightWidth, gameHeight)
-	logPanel := panel("Move Log", m.recentLog(logHeight-1), rightWidth, logHeight)
-	cmdPanel := panel("Commands", commands, rightWidth, cmdHeight)
-	rightCol := lipgloss.JoinVertical(lipgloss.Left, gamePanel, logPanel, cmdPanel)
-
-	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, boardPanel, rightCol)
-
-	modeLine := labelStyle.Render("Input Mode:") + " " + commandMode
-	inputBody := strings.Join([]string{
-		modeLine,
-		m.msg,
-		"",
-		m.input.View(),
-	}, "\n")
-	inputPanel := panel("Command Line", inputBody, totalInner, 7)
-
-	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, inputPanel)
+	out.WriteString("Type help for commands.\n\n")
+	out.WriteString(m.msg)
+	out.WriteString("\n\n")
+	out.WriteString("> ")
+	out.WriteString(m.input.View())
+	return out.String()
 }
 
 func (m model) View() string {
-	if m.width == 0 || m.height == 0 {
-		return "Initializing TUI..."
+	if m.width > 0 && m.width < 42 {
+		return fmt.Sprintf("Terminal too narrow (%d cols). Need at least 42.\n\n> %s", m.width, m.input.View())
 	}
-
-	if m.width < 90 || m.height < 28 {
-		warn := fmt.Sprintf(
-			"Terminal too small for full TUI (%dx%d).\nNeed at least 90x28.\n\n%s\n\n%s",
-			m.width,
-			m.height,
-			mutedStyle.Render("Use a larger terminal for multi-column layout."),
-			m.input.View(),
-		)
-		return appStyle.Render(panel("Viewport", warn, maxInt(m.width-4, 40), maxInt(m.height-4, 8)))
+	frame := m.renderCLI()
+	if m.height <= 0 {
+		return frame
 	}
-
-	rendered := appStyle.Render(m.renderMainLayout())
-	lines := strings.Split(rendered, "\n")
+	lines := strings.Split(frame, "\n")
 	if len(lines) >= m.height {
 		return strings.Join(lines[:m.height], "\n")
 	}
@@ -560,25 +389,11 @@ func (m model) View() string {
 	return strings.Join(append(lines, pad...), "\n")
 }
 
-func runTUI() error {
-	p := tea.NewProgram(initialModel(), tea.WithAltScreen())
+func Run(withAltScreen bool) error {
+	opts := []tea.ProgramOption{}
+	if withAltScreen {
+		opts = append(opts, tea.WithAltScreen())
+	}
+	p := tea.NewProgram(initialModel(), opts...)
 	return p.Start()
-}
-
-func main() {
-	useCLI := flag.Bool("cli", false, "run CLI renderer mode")
-	flag.Parse()
-
-	if *useCLI {
-		if err := cli.Run(false); err != nil {
-			fmt.Println("Error starting CLI:", err)
-			os.Exit(1)
-		}
-		return
-	}
-
-	if err := runTUI(); err != nil {
-		fmt.Println("Error starting UI:", err)
-		os.Exit(1)
-	}
 }
