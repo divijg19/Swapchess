@@ -64,10 +64,14 @@ Planned milestones:
 
 ```
 engine/   → Pure chess + `Swapchess` rules (no UI dependencies)
-view/     → Render-agnostic game-to-view mapping
-cmd/      → Rendering & input layers
-  ├─ tui/ → Bubble Tea terminal interface
-  └─ gfx/ → Ebiten native 2D renderer
+view/     → Render-agnostic game snapshot mapping
+internal/
+  ├─ app/        → Shared terminal session/input state
+  ├─ render/text → Shared text board/status renderers
+  └─ ui/         → Terminal mode implementations
+cmd/      → Public launchers
+  ├─ swapchess/ → Canonical terminal launcher
+  └─ gfx/       → Reserved native 2D renderer
 assets/   → Embedded piece & board art
 ```
 
@@ -85,9 +89,9 @@ assets/   → Embedded piece & board art
 ### Terminal UI (TUI)
 
 * Built with **Bubble Tea**
-* Keyboard-driven
+* Keyboard-driven with board focus and command prompt
 * Unicode piece rendering with file-based asset overrides from `assets/pieces`
-* Board coordinates, check/checkmate/stalemate status line, move undo
+* Shared input validation, move parsing, promotion flow, and undo with CLI mode
 * Used for rule validation and fast iteration
 
 ### Native 2D UI
@@ -125,9 +129,35 @@ This project values *completion over expansion*.
 
 ---
 
-## Build & Run (Planned)
+## Build & Run
 
-Once implemented, `Swapchess` will be distributed as a **single native executable** per platform with no external runtime dependencies.
+Current terminal launcher:
+
+```bash
+go run ./cmd/swapchess
+```
+
+CLI mode:
+
+```bash
+go run ./cmd/swapchess --cli
+```
+
+Explicit mode selection:
+
+```bash
+go run ./cmd/swapchess --mode=tui
+go run ./cmd/swapchess --mode=cli
+```
+
+The hidden debug renderer flag can be used for development comparisons:
+
+```bash
+go run ./cmd/swapchess --debug-renderer=view
+go run ./cmd/swapchess --debug-renderer=engine
+```
+
+`Swapchess` is still intended to ship as a **single native executable** per platform with no external runtime dependencies.
 
 Target platforms:
 
