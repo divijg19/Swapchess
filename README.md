@@ -165,19 +165,31 @@ Print the current release version:
 go run ./cmd/swapchess --version
 ```
 
-Build release artifacts for `v1.0.0`:
+Canonical release builds are produced by **GitHub Actions** on pushed version tags like `v1.0.0`.
+
+CI workflow:
+
+* runs tests and build checks on pushes and pull requests
+
+Release workflow:
+
+* runs on tags matching `v*.*.*`
+* builds cross-platform artifacts
+* publishes them to the GitHub Release
+
+For local reproduction of the release packaging step, you can still run:
 
 ```bash
 ./scripts/build_release_artifacts.sh
 ```
 
-Artifacts are written to:
+Local artifacts are written to:
 
 ```text
 bin/releases/v1.0.0/
 ```
 
-The release artifact build currently emits binaries for:
+The release artifact build emits packaged downloads for:
 
 * Linux `amd64`
 * Linux `arm64`
