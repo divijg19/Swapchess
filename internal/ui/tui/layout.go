@@ -11,13 +11,15 @@ const (
 	boardWidthPercent       = 100
 	targetBoardColumnPercent = 60
 	largeViewportWidthThreshold = 96
+	minimumViewportWidth    = 66
+	minimumViewportHeight   = 31
 	minimumInputBodyLine    = 3
 	minimumRightBodyWidth   = 22
 	preferredRightBodyWidth = 26
 	minimumGameBodyLines    = 4
 	minimumHelpBodyLines    = 3
 	maximumHelpBodyLines    = 5
-	minimumLogBodyLines     = 8
+	minimumLogBodyLines     = 6
 	panelChromeWidth        = 4
 	panelBorderWidth        = 2
 	panelChromeHeight       = 3
@@ -52,11 +54,14 @@ type layoutSpec struct {
 }
 
 func minimumViewport() (int, int) {
-	return viewportForScale(rendertext.BaseBoardScale)
+	return minimumViewportWidth, minimumViewportHeight
 }
 
 func computeLayout(width, height int) (layoutSpec, bool) {
-	return computeLayoutForContent(width, height, defaultLayoutContent())
+	if width < minimumViewportWidth || height < minimumViewportHeight {
+		return layoutSpec{}, false
+	}
+	return computeLayoutForContent(width, height, minimumLayoutContent())
 }
 
 func computeLayoutForContent(width, height int, content layoutContent) (layoutSpec, bool) {
@@ -71,18 +76,10 @@ func computeLayoutForContent(width, height int, content layoutContent) (layoutSp
 	if usableWidth <= 0 {
 		return layoutSpec{}, false
 	}
-
-	rightBodyWidth := targetRightBodyWidth(usableWidth, minimumBoardOuterWidth)
-	if rightBodyWidth == 0 {
+	maxRightBodyWidth := usableWidth - minimumBoardOuterWidth - layoutGapWidth - panelChromeWidth
+	if maxRightBodyWidth < minimumRightBodyWidth {
 		return layoutSpec{}, false
 	}
-	rightWidth := rightBodyWidth + panelChromeWidth
-
-	availableBoardOuterWidth := usableWidth - rightWidth - layoutGapWidth
-	if availableBoardOuterWidth < minimumBoardOuterWidth {
-		return layoutSpec{}, false
-	}
-	availableBoardWidth := reducedBoardWidth(maxInt(availableBoardOuterWidth-boardPanelChromeWidth, minimumBoardWidth), minimumBoardWidth)
 
 	inputBodyLines := minimumInputBodyLine
 	mainHeight := height - headerLines - (inputBodyLines + panelChromeHeight)
@@ -90,55 +87,20 @@ func computeLayoutForContent(width, height int, content layoutContent) (layoutSp
 		return layoutSpec{}, false
 	}
 
-	gameBodyLines, helpBodyLines := fixedInfoPanelBodyLines(content, rightBodyWidth)
-	minimumRightHeight := rightColumnOuterHeight(gameBodyLines, minimumLogBodyLines, helpBodyLines)
-	if minimumRightHeight > mainHeight {
+	maximumBoardOuterWidth := usableWidth - (minimumRightBodyWidth + panelChromeWidth) - layoutGapWidth
+	if maximumBoardOuterWidth < minimumBoardOuterWidth {
 		return layoutSpec{}, false
 	}
-
-	boardMetrics := rendertext.FitMetrics(availableBoardWidth, mainHeight-boardPanelChromeHeight)
-	if boardMetrics.Width == 0 || boardMetrics.Height == 0 {
-		return layoutSpec{}, false
+	boardOuterWidthLimit := maximumBoardOuterWidth
+	if usableWidth >= largeViewportWidthThreshold {
+		targetBoardWidth := (usableWidth * targetBoardColumnPercent) / 100
+		targetBoardOuterWidth := targetBoardWidth + boardPanelChromeWidth
+		if targetBoardOuterWidth >= minimumBoardOuterWidth {
+			boardOuterWidthLimit = minInt(boardOuterWidthLimit, targetBoardOuterWidth)
+		}
 	}
 
-	boardOuterWidth := boardMetrics.Width + boardPanelChromeWidth
-	boardOuterLines := boardMetrics.Height + boardPanelChromeHeight
-	if boardOuterLines > mainHeight {
-		return layoutSpec{}, false
-	}
-
-	logBodyLines := fixedMoveLogBodyLines(mainHeight, gameBodyLines, helpBodyLines)
-	rightColumnHeight := rightColumnOuterHeight(gameBodyLines, logBodyLines, helpBodyLines)
-	if rightColumnHeight > mainHeight {
-		return layoutSpec{}, false
-	}
-
-	leftWidth := usableWidth - layoutGapWidth - rightWidth
-	rowWidth := leftWidth + layoutGapWidth + rightWidth
-	if leftWidth < boardOuterWidth || rowWidth > usableWidth {
-		return layoutSpec{}, false
-	}
-
-	return layoutSpec{
-		ViewportWidth:   width,
-		ViewportHeight:  height,
-		UsableWidth:     usableWidth,
-		RowWidth:        rowWidth,
-		MainHeight:      mainHeight,
-		LeftWidth:       leftWidth,
-		RightWidth:      rightWidth,
-		RightBodyWidth:  rightBodyWidth,
-		BoardBodyWidth:  boardMetrics.Width,
-		BoardBodyLines:  boardMetrics.Height,
-		BoardOuterWidth: boardOuterWidth,
-		BoardOuterLines: boardOuterLines,
-		BoardCellWidth:  boardMetrics.CellWidth,
-		BoardRowHeight:  boardMetrics.RowHeight,
-		LogBodyLines:    logBodyLines,
-		GameBodyLines:   gameBodyLines,
-		HelpBodyLines:   helpBodyLines,
-		InputBodyLines:  inputBodyLines,
-	}, true
+	return maximizeBoardLayout(width, height, usableWidth, mainHeight, inputBodyLines, boardOuterWidthLimit, minimumBoardWidth, minimumBoardOuterWidth, content)
 }
 
 func normalizeLayoutContent(content layoutContent) layoutContent {
@@ -165,25 +127,6 @@ func wrappedLineCount(lines []string, width int) int {
 	return len(wrapped)
 }
 
-func targetRightBodyWidth(usableWidth, minimumBoardOuterWidth int) int {
-	maxRightBodyWidth := usableWidth - minimumBoardOuterWidth - layoutGapWidth - panelChromeWidth
-	if maxRightBodyWidth < minimumRightBodyWidth {
-		return 0
-	}
-	rightBodyWidth := minInt(maxRightBodyWidth, preferredRightBodyWidth)
-	if usableWidth >= largeViewportWidthThreshold {
-		targetLeftWidth := (usableWidth * targetBoardColumnPercent) / 100
-		if targetLeftWidth < minimumBoardOuterWidth {
-			targetLeftWidth = minimumBoardOuterWidth
-		}
-		targetRightBodyWidth := usableWidth - targetLeftWidth - layoutGapWidth - panelChromeWidth
-		if targetRightBodyWidth > rightBodyWidth {
-			rightBodyWidth = minInt(targetRightBodyWidth, maxRightBodyWidth)
-		}
-	}
-	return rightBodyWidth
-}
-
 func fixedInfoPanelBodyLines(content layoutContent, rightBodyWidth int) (int, int) {
 	gameBodyLines := maxInt(wrappedLineCount(content.GameLines, rightBodyWidth), minimumGameBodyLines)
 	helpBodyLines := maxInt(wrappedLineCount(content.HelpLines, rightBodyWidth), minimumHelpBodyLines)
@@ -205,9 +148,78 @@ func rightColumnOuterHeight(gameBodyLines, logBodyLines, helpBodyLines int) int 
 	return (gameBodyLines + panelChromeHeight) + (logBodyLines + panelChromeHeight) + (helpBodyLines + panelChromeHeight)
 }
 
+func maximizeBoardLayout(width, height, usableWidth, mainHeight, inputBodyLines, boardOuterWidthLimit, minimumBoardWidth, minimumBoardOuterWidth int, content layoutContent) (layoutSpec, bool) {
+	for currentBoardOuterLimit := boardOuterWidthLimit; currentBoardOuterLimit >= minimumBoardOuterWidth; currentBoardOuterLimit-- {
+		availableBoardWidth := reducedBoardWidth(maxInt(currentBoardOuterLimit-boardPanelChromeWidth, minimumBoardWidth), minimumBoardWidth)
+		boardMetrics := rendertext.FitMetrics(availableBoardWidth, mainHeight-boardPanelChromeHeight)
+		if boardMetrics.Width == 0 || boardMetrics.Height == 0 {
+			continue
+		}
+
+		boardOuterWidth := boardMetrics.Width + boardPanelChromeWidth
+		boardOuterLines := boardMetrics.Height + boardPanelChromeHeight
+		if boardOuterWidth > currentBoardOuterLimit || boardOuterLines > mainHeight {
+			continue
+		}
+
+		leftWidth := currentBoardOuterLimit
+		rightWidth := usableWidth - layoutGapWidth - leftWidth
+		rightBodyWidth := rightWidth - panelChromeWidth
+		if rightBodyWidth < minimumRightBodyWidth {
+			continue
+		}
+
+		gameBodyLines, helpBodyLines := fixedInfoPanelBodyLines(content, rightBodyWidth)
+		if helpBodyLines > maximumHelpBodyLines {
+			continue
+		}
+		minimumRightHeight := rightColumnOuterHeight(gameBodyLines, minimumLogBodyLines, helpBodyLines)
+		if minimumRightHeight > mainHeight {
+			continue
+		}
+
+		logBodyLines := fixedMoveLogBodyLines(mainHeight, gameBodyLines, helpBodyLines)
+		rightColumnHeight := rightColumnOuterHeight(gameBodyLines, logBodyLines, helpBodyLines)
+		if rightColumnHeight > mainHeight {
+			continue
+		}
+
+		rowWidth := leftWidth + layoutGapWidth + rightWidth
+		if rowWidth > usableWidth {
+			continue
+		}
+
+		return layoutSpec{
+			ViewportWidth:   width,
+			ViewportHeight:  height,
+			UsableWidth:     usableWidth,
+			RowWidth:        rowWidth,
+			MainHeight:      mainHeight,
+			LeftWidth:       leftWidth,
+			RightWidth:      rightWidth,
+			RightBodyWidth:  rightBodyWidth,
+			BoardBodyWidth:  boardMetrics.Width,
+			BoardBodyLines:  boardMetrics.Height,
+			BoardOuterWidth: boardOuterWidth,
+			BoardOuterLines: boardOuterLines,
+			BoardCellWidth:  boardMetrics.CellWidth,
+			BoardRowHeight:  boardMetrics.RowHeight,
+			LogBodyLines:    logBodyLines,
+			GameBodyLines:   gameBodyLines,
+			HelpBodyLines:   helpBodyLines,
+			InputBodyLines:  inputBodyLines,
+		}, true
+	}
+
+	return layoutSpec{}, false
+}
+
 func viewportForScale(scale int) (int, int) {
+	return viewportForContentScale(scale, defaultLayoutContent())
+}
+
+func viewportForContentScale(scale int, content layoutContent) (int, int) {
 	boardMetrics := rendertext.MetricsForScale(scale)
-	content := defaultLayoutContent()
 	rightWidth := preferredRightBodyWidth + panelChromeWidth
 	gameBodyLines, helpBodyLines := fixedInfoPanelBodyLines(content, preferredRightBodyWidth)
 	rightColumnHeight := rightColumnOuterHeight(gameBodyLines, minimumLogBodyLines, helpBodyLines)
@@ -269,8 +281,36 @@ func defaultLayoutContent() layoutContent {
 			alignedDualRow("Tab", "focus", ":", "prompt", 5),
 			alignedDualRow("Enter", "select", "Esc", "back", 5),
 			alignedDualRow("u", "undo", "?", "help", 5),
-			alignedDualRow("Move", "arrows", "Log", "PgUp/PgDn", 5),
+			alignedDualRow("Move", "keys", "Log", "PgUp/PgDn", 5),
 			alignedDualRow("Type", "prompt", "Debug", "render", 5),
+		},
+		InputLines: []string{
+			alignedDualRow("Mode", "move/command", "Focus", "board", 7),
+			"Enter a move like e2e4. Type help for commands.",
+			"Hint: Enter move (e2e4 / e7e8q) or command (help / undo / clear / quit).",
+			"move> ",
+		},
+	}
+}
+
+func minimumLayoutContent() layoutContent {
+	return layoutContent{
+		GameLines: []string{
+			alignedRow("Turn", "white", 6),
+			alignedRow("Status", "in play", 6),
+			alignedRow("Cursor", "e2", 6),
+			alignedRow("Select", "-", 6),
+			alignedRow("Last", "-", 6),
+			alignedRow("Castle", "W:KQ B:KQ", 6),
+		},
+		LogLines: []string{
+			"01. e2e4  e7e5",
+			"02. g1f3  b8c6",
+		},
+		HelpLines: []string{
+			alignedDualRow("Tab", "focus", ":", "prompt", 5),
+			alignedDualRow("Enter", "select", "Esc", "back", 5),
+			alignedDualRow("u", "undo", "?", "help", 5),
 		},
 		InputLines: []string{
 			alignedDualRow("Mode", "move/command", "Focus", "board", 7),

@@ -24,9 +24,10 @@ func run(args []string, stdout, stderr io.Writer, cliRunner, tuiRunner runFunc) 
 
 	useCLI := flags.Bool("cli", false, "run CLI mode")
 	mode := flags.String("mode", string(app.ModeTUI), "run mode: tui or cli")
+	showVersion := flags.Bool("version", false, "print version and exit")
 	debugRenderer := flags.String("debug-renderer", "", "")
 	flags.Usage = func() {
-		fmt.Fprintf(stdout, "Usage: swapchess [--cli] [--mode=tui|cli]\n")
+		fmt.Fprintf(stdout, "Usage: swapchess [--cli] [--mode=tui|cli] [--version]\n")
 		fmt.Fprintf(stdout, "Default mode is the alt-screen terminal UI.\n")
 	}
 
@@ -35,6 +36,11 @@ func run(args []string, stdout, stderr io.Writer, cliRunner, tuiRunner runFunc) 
 			return 0
 		}
 		return 2
+	}
+
+	if *showVersion {
+		fmt.Fprintf(stdout, "SwapChess %s\n", app.Version)
+		return 0
 	}
 
 	resolvedMode := *mode

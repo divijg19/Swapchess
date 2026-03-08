@@ -276,7 +276,12 @@ func (m model) renderBoardPanel(layout layoutSpec) string {
 	board = strings.TrimRight(board, "\n")
 	boardLines := strings.Split(board, "\n")
 	fillLines := maxInt(layout.MainHeight-layout.BoardOuterLines, 0)
-	for i := 0; i < fillLines; i++ {
+	topFillLines := fillLines / 2
+	bottomFillLines := fillLines - topFillLines
+	for i := 0; i < topFillLines; i++ {
+		boardLines = append([]string{""}, boardLines...)
+	}
+	for i := 0; i < bottomFillLines; i++ {
 		boardLines = append(boardLines, "")
 	}
 	innerWidth := maxInt(layout.LeftWidth-boardPanelChromeWidth, 1)
@@ -319,21 +324,25 @@ func (m model) helpFields() []infoField {
 		{Label: ":", Value: "prompt"},
 		{Label: "Enter", Value: "select"},
 		{Label: "Esc", Value: "back"},
-		{Label: "u", Value: "undo"},
-		{Label: "?", Value: "help"},
 	}
 	if m.helpExpanded {
 		fields = append(fields,
-			infoField{Label: "Move", Value: "arrows"},
 			infoField{Label: "Log", Value: "PgUp/PgDn"},
+			infoField{Label: "Move", Value: "keys"},
+			infoField{Label: "u", Value: "undo"},
 			infoField{Label: "Type", Value: "prompt"},
 		)
 		if m.session.DebugRendererEnabled {
-			fields = append(fields, infoField{Label: "Debug", Value: "renderer view / engine"})
+			fields = append(fields, infoField{Label: "Debug", Value: "render"})
 		} else {
 			fields = append(fields, infoField{Label: "Alt", Value: "h j k l also move"})
 		}
+		return fields
 	}
+	fields = append(fields,
+		infoField{Label: "u", Value: "undo"},
+		infoField{Label: "?", Value: "help"},
+	)
 	return fields
 }
 
@@ -426,7 +435,7 @@ func (m model) layoutContent() layoutContent {
 	return layoutContent{
 		GameLines:  m.gameLines(preferredRightBodyWidth),
 		LogLines:   []string{"01. e2e4  e7e5", "02. g1f3  b8c6", "03. f1b5  a7a6", "04. b5a4  g8f6"},
-		HelpLines:  m.helpLines(preferredRightBodyWidth),
+		HelpLines:  m.helpLines(preferredRightBodyWidth + 14),
 		InputLines: m.inputMeasureLines(),
 	}
 }

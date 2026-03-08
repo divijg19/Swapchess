@@ -107,8 +107,31 @@ func TestFitMetricsUsesAdditionalWidthAtFixedHeight(t *testing.T) {
 		t.Fatalf("expected fitted board to widen with additional horizontal space, got %d -> %d", base.Width, wider.Width)
 	}
 	aspect := float64(wider.Width) / float64(wider.Height)
-	if aspect > 2.25 {
+	if aspect > 3.50 {
 		t.Fatalf("expected fixed-height fit to stay within bounded aspect, got %.2f (%+v)", aspect, wider)
+	}
+}
+
+func TestFitMetricsUsesAdditionalWidthAtCompactHeight(t *testing.T) {
+	base := FitMetrics(42, BoardLines)
+	wider := FitMetrics(50, BoardLines)
+	if wider.Width <= base.Width {
+		t.Fatalf("expected compact-height fit to widen when extra width is available, got %d -> %d", base.Width, wider.Width)
+	}
+	aspect := float64(wider.Width) / float64(wider.Height)
+	if aspect > 3.50 {
+		t.Fatalf("expected compact-height fit to stay within bounded aspect, got %.2f (%+v)", aspect, wider)
+	}
+}
+
+func TestFitMetricsCanFillWideCompactViewport(t *testing.T) {
+	metrics := FitMetrics(66, BoardLines)
+	if metrics.Width != 66 {
+		t.Fatalf("expected compact-height fit to use full available width 66, got %+v", metrics)
+	}
+	aspect := float64(metrics.Width) / float64(metrics.Height)
+	if aspect > 3.50 {
+		t.Fatalf("expected wide compact fit to stay within bounded aspect, got %.2f (%+v)", aspect, metrics)
 	}
 }
 
@@ -126,8 +149,8 @@ func TestFitMetricsPrefersSquareishAspect(t *testing.T) {
 		t.Fatalf("expected fitted metrics for 90x45")
 	}
 	aspect := float64(metrics.Width) / float64(metrics.Height)
-	if aspect > 2.2 {
-		t.Fatalf("expected square-ish fitted aspect <= 2.2, got %.2f (%+v)", aspect, metrics)
+	if aspect > 3.50 {
+		t.Fatalf("expected square-ish fitted aspect <= 3.50, got %.2f (%+v)", aspect, metrics)
 	}
 }
 
