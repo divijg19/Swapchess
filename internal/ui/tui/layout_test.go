@@ -18,6 +18,9 @@ func TestComputeLayoutRejectsBelowMinimum(t *testing.T) {
 
 func TestComputeLayoutAcceptsMinimumViewport(t *testing.T) {
 	minWidth, minHeight := minimumViewport()
+	if minWidth != 66 || minHeight != 31 {
+		t.Fatalf("expected compact minimum viewport 66x31, got %dx%d", minWidth, minHeight)
+	}
 	layout, ok := computeLayout(minWidth, minHeight)
 	if !ok {
 		t.Fatalf("expected layout at minimum viewport")
@@ -59,6 +62,9 @@ func TestComputeLayoutScalesRightPanelsAtWideViewport(t *testing.T) {
 	if wide.RightBodyWidth < narrow.RightBodyWidth {
 		t.Fatalf("expected HUD width to grow or hold at larger viewport, got %d -> %d", narrow.RightBodyWidth, wide.RightBodyWidth)
 	}
+	if wide.BoardOuterWidth < narrow.BoardOuterWidth {
+		t.Fatalf("expected board HUD width to grow or hold at larger viewport, got %d -> %d", narrow.BoardOuterWidth, wide.BoardOuterWidth)
+	}
 	if wide.GameBodyLines > narrow.GameBodyLines || wide.HelpBodyLines > narrow.HelpBodyLines {
 		t.Fatalf("expected wider HUD to need no extra wrapping lines, got narrow=%+v wide=%+v", narrow, wide)
 	}
@@ -66,9 +72,9 @@ func TestComputeLayoutScalesRightPanelsAtWideViewport(t *testing.T) {
 		t.Fatalf("expected move log height to stay level or grow, got %d -> %d", narrow.LogBodyLines, wide.LogBodyLines)
 	}
 	if wide.UsableWidth >= largeViewportWidthThreshold {
-		leftShare := (wide.LeftWidth * 100) / wide.UsableWidth
-		if leftShare > targetBoardColumnPercent+1 {
-			t.Fatalf("expected large viewport board column to stay near %d%%, got %d%% (%+v)", targetBoardColumnPercent, leftShare, wide)
+		boardShare := (wide.BoardBodyWidth * 100) / wide.UsableWidth
+		if boardShare > targetBoardColumnPercent+1 {
+			t.Fatalf("expected large viewport board width to stay near %d%%, got %d%% (%+v)", targetBoardColumnPercent, boardShare, wide)
 		}
 	}
 	if wide.RowWidth != wide.UsableWidth || wide.MainHeight != rightColumnOuterHeight(wide.GameBodyLines, wide.LogBodyLines, wide.HelpBodyLines) {
@@ -90,10 +96,13 @@ func TestComputeLayoutWidensBoardAsViewportWidens(t *testing.T) {
 	if wider.BoardBodyWidth <= base.BoardBodyWidth {
 		t.Fatalf("expected board width to grow with larger proportional viewport, got %d -> %d", base.BoardBodyWidth, wider.BoardBodyWidth)
 	}
+	if wider.LeftWidth < wider.BoardOuterWidth {
+		t.Fatalf("expected board column width to contain board HUD width, got %+v", wider)
+	}
 	if wider.UsableWidth >= largeViewportWidthThreshold {
-		leftShare := (wider.LeftWidth * 100) / wider.UsableWidth
-		if leftShare > targetBoardColumnPercent+1 {
-			t.Fatalf("expected wider layout board column to stay near %d%%, got %d%% (%+v)", targetBoardColumnPercent, leftShare, wider)
+		panelShare := (wider.LeftWidth * 100) / wider.UsableWidth
+		if panelShare > targetBoardColumnPercent+1 {
+			t.Fatalf("expected wider layout board panel to stay near %d%%, got %d%% (%+v)", targetBoardColumnPercent, panelShare, wider)
 		}
 	}
 }
@@ -107,10 +116,13 @@ func TestComputeLayoutKeepsHudWidthNearFixed(t *testing.T) {
 	if layout.RightBodyWidth < preferredRightBodyWidth {
 		t.Fatalf("expected HUD width to flex upward on expanded viewport, got %+v", layout)
 	}
+	if layout.LeftWidth < layout.BoardOuterWidth {
+		t.Fatalf("expected expanded layout board column width to contain board HUD width, got %+v", layout)
+	}
 	if layout.UsableWidth >= largeViewportWidthThreshold {
-		leftShare := (layout.LeftWidth * 100) / layout.UsableWidth
-		if leftShare > targetBoardColumnPercent+1 {
-			t.Fatalf("expected expanded layout board column to stay near %d%%, got %d%% (%+v)", targetBoardColumnPercent, leftShare, layout)
+		panelShare := (layout.LeftWidth * 100) / layout.UsableWidth
+		if panelShare > targetBoardColumnPercent+1 {
+			t.Fatalf("expected expanded layout board panel to stay near %d%%, got %d%% (%+v)", targetBoardColumnPercent, panelShare, layout)
 		}
 	}
 	if layout.LogBodyLines < minimumLogBodyLines {
@@ -139,6 +151,39 @@ func TestComputeLayoutWidensBoardAtFixedHeight(t *testing.T) {
 	}
 }
 
+func TestComputeLayoutWidensBoardBeyondSeventyThreeColumnsAtCompactHeight(t *testing.T) {
+	content := minimumLayoutContent()
+	narrow, ok := computeLayoutForContent(73, minimumViewportHeight, content)
+	if !ok {
+		t.Fatalf("expected layout at 73 columns")
+	}
+	wide, ok := computeLayoutForContent(95, minimumViewportHeight, content)
+	if !ok {
+		t.Fatalf("expected layout at wider compact-height viewport")
+	}
+	if wide.BoardBodyWidth <= narrow.BoardBodyWidth {
+		t.Fatalf("expected compact-height board to widen beyond 73 columns, got %d -> %d", narrow.BoardBodyWidth, wide.BoardBodyWidth)
+	}
+}
+
+func TestComputeLayoutUsesMostOfBoardPanelAtCompactHeight(t *testing.T) {
+	layout, ok := computeLayoutForContent(110, minimumViewportHeight, minimumLayoutContent())
+	if !ok {
+		t.Fatalf("expected layout for wide compact-height viewport")
+	}
+	innerWidth := layout.LeftWidth - boardPanelChromeWidth
+	if innerWidth < 1 {
+		t.Fatalf("expected positive board panel inner width, got %+v", layout)
+	}
+	expected := rendertext.FitMetrics(innerWidth, layout.MainHeight-boardPanelChromeHeight)
+	if expected.Width == 0 || expected.Height == 0 {
+		t.Fatalf("expected fitted board metrics for compact-height viewport")
+	}
+	if layout.BoardBodyWidth != expected.Width || layout.BoardBodyLines != expected.Height {
+		t.Fatalf("expected compact-height board to use maximum fitted size %+v, got %+v", expected, layout)
+	}
+}
+
 func TestComputeLayoutTallensBoardAsViewportTallens(t *testing.T) {
 	minWidth, minHeight := minimumViewport()
 	base, ok := computeLayout(minWidth, minHeight)
@@ -152,6 +197,53 @@ func TestComputeLayoutTallensBoardAsViewportTallens(t *testing.T) {
 	}
 	if taller.BoardBodyLines <= base.BoardBodyLines {
 		t.Fatalf("expected board height to grow with larger proportional viewport, got %d -> %d", base.BoardBodyLines, taller.BoardBodyLines)
+	}
+}
+
+func TestComputeLayoutMaximizesBoardBeforeGrowingHud(t *testing.T) {
+	content := layoutContent{
+		GameLines:  []string{"state"},
+		LogLines:   []string{"01. e2e4  e7e5"},
+		HelpLines:  []string{"help"},
+		InputLines: []string{"move> "},
+	}
+	width, height := 118, 39
+	layout, ok := computeLayoutForContent(width, height, content)
+	if !ok {
+		t.Fatalf("expected layout for board-first sizing")
+	}
+	boardOuterWidthLimit := layout.UsableWidth - (minimumRightBodyWidth + panelChromeWidth) - layoutGapWidth
+	if layout.UsableWidth >= largeViewportWidthThreshold {
+		boardOuterWidthLimit = minInt(boardOuterWidthLimit, ((layout.UsableWidth*targetBoardColumnPercent)/100)+boardPanelChromeWidth)
+	}
+	expectedBoard := rendertext.FitMetrics(boardOuterWidthLimit-boardPanelChromeWidth, layout.MainHeight-boardPanelChromeHeight)
+	if expectedBoard.Width == 0 || expectedBoard.Height == 0 {
+		t.Fatalf("expected fitted board for board-first sizing")
+	}
+	if layout.LeftWidth != boardOuterWidthLimit {
+		t.Fatalf("expected board-first layout to grow board panel to %d, got %+v", boardOuterWidthLimit, layout)
+	}
+	if layout.BoardOuterWidth != expectedBoard.Width+boardPanelChromeWidth {
+		t.Fatalf("expected board-first layout to use widest square-ish board %d, got %+v", expectedBoard.Width+boardPanelChromeWidth, layout)
+	}
+	if layout.RightBodyWidth < minimumRightBodyWidth {
+		t.Fatalf("expected panels to grow only after board saturation, got %+v", layout)
+	}
+}
+
+func TestComputeLayoutLetsBoardReachSixtyPercentWhenHeightAllows(t *testing.T) {
+	layout, ok := computeLayoutForContent(140, 55, layoutContent{
+		GameLines:  []string{"state"},
+		LogLines:   []string{"01. e2e4  e7e5"},
+		HelpLines:  []string{"help"},
+		InputLines: []string{"move> "},
+	})
+	if !ok {
+		t.Fatalf("expected layout for tall wide viewport")
+	}
+	targetBoardWidth := (layout.UsableWidth * targetBoardColumnPercent) / 100
+	if layout.BoardBodyWidth != targetBoardWidth {
+		t.Fatalf("expected board to use full %d%% target width %d when height allows, got %+v", targetBoardColumnPercent, targetBoardWidth, layout)
 	}
 }
 

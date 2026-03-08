@@ -118,7 +118,7 @@ func FitMetrics(maxWidth, maxHeight int) BoardMetrics {
 
 	const (
 		targetAspectRatio = 1.85
-		maxAspectRatio    = 2.25
+		maxAspectRatio    = 3.50
 		minAreaRetention  = 0.80
 	)
 
@@ -131,7 +131,7 @@ func FitMetrics(maxWidth, maxHeight int) BoardMetrics {
 		if minimumCellWidth < 1 {
 			minimumCellWidth = 1
 		}
-		maximumCellWidth := preferredCellWidth + 1
+		maximumCellWidth := maxCellWidth
 		for cellWidth := 1; cellWidth <= maxCellWidth; cellWidth++ {
 			if cellWidth < minimumCellWidth || cellWidth > maximumCellWidth {
 				continue

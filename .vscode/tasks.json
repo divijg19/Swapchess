@@ -10,6 +10,13 @@
 				"./..."
 			],
 			"isBackground": false
+		},
+		{
+			"label": "build-release-artifacts",
+			"type": "shell",
+			"command": "./scripts/build_release_artifacts.sh",
+			"args": [],
+			"isBackground": false
 		}
 	]
 }

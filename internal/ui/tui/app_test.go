@@ -428,9 +428,9 @@ func TestExpandedHudRemainsCompactAtLargeViewport(t *testing.T) {
 		t.Fatalf("expected large viewport HUD width to grow or hold above preferred width, got %+v", layout)
 	}
 	if layout.UsableWidth >= largeViewportWidthThreshold {
-		leftShare := (layout.LeftWidth * 100) / layout.UsableWidth
-		if leftShare > targetBoardColumnPercent+1 {
-			t.Fatalf("expected large viewport board column to stay near %d%%, got %d%% (%+v)", targetBoardColumnPercent, leftShare, layout)
+		panelShare := (layout.LeftWidth * 100) / layout.UsableWidth
+		if panelShare > targetBoardColumnPercent+1 {
+			t.Fatalf("expected large viewport board panel to stay near %d%%, got %d%% (%+v)", targetBoardColumnPercent, panelShare, layout)
 		}
 	}
 }

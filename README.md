@@ -47,14 +47,14 @@ This is a game about **managing chaos**, not surrendering to it.
 
 ## Project Status
 
-**In development:** January – February 2026
+**Released:** `v1.0.0`
 
-Planned milestones:
+Completed milestones:
 
 1. Pure Go engine (rules, board state, swap logic)
 2. Terminal UI (TUI) using **Bubble Tea**
-3. Native windowed 2D UI using **Ebiten (Ebitengine)**
-4. Visual polish, packaging, and release binaries
+3. CLI fallback mode for terminal-first play and debugging
+4. Packaging and native release binaries as build artifacts
 
 ---
 
@@ -158,6 +158,32 @@ go run ./cmd/swapchess --debug-renderer=engine
 ```
 
 `Swapchess` is still intended to ship as a **single native executable** per platform with no external runtime dependencies.
+
+Print the current release version:
+
+```bash
+go run ./cmd/swapchess --version
+```
+
+Build release artifacts for `v1.0.0`:
+
+```bash
+./scripts/build_release_artifacts.sh
+```
+
+Artifacts are written to:
+
+```text
+bin/releases/v1.0.0/
+```
+
+The release artifact build currently emits binaries for:
+
+* Linux `amd64`
+* Linux `arm64`
+* macOS `amd64`
+* macOS `arm64`
+* Windows `amd64`
 
 Target platforms:
 

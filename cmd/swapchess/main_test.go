@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/divijg19/Swapchess/internal/app"
 )
 
 func TestRunDefaultsToTUI(t *testing.T) {
@@ -140,7 +142,26 @@ func TestRunHelpWritesUsage(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("expected zero exit code for help, got %d", exitCode)
 	}
-	if !strings.Contains(stdout.String(), "Usage: swapchess [--cli] [--mode=tui|cli]") {
+	if !strings.Contains(stdout.String(), "Usage: swapchess [--cli] [--mode=tui|cli] [--version]") {
 		t.Fatalf("expected usage in stdout, got %q", stdout.String())
+	}
+}
+
+func TestRunVersionWritesVersion(t *testing.T) {
+	var stdout, stderr strings.Builder
+
+	exitCode := run([]string{"--version"}, &stdout, &stderr,
+		func(string) error { return nil },
+		func(string) error { return nil },
+	)
+
+	if exitCode != 0 {
+		t.Fatalf("expected zero exit code for version, got %d", exitCode)
+	}
+	if got := stdout.String(); !strings.Contains(got, "SwapChess "+app.Version) {
+		t.Fatalf("expected version output, got %q", got)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("expected empty stderr for version, got %q", stderr.String())
 	}
 }
