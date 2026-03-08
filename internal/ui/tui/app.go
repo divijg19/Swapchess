@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/cursor"
 	textinput "github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -23,7 +24,13 @@ const (
 )
 
 var (
-	appStyle       = lipgloss.NewStyle().Padding(0, appPaddingX)
+	appStyle        = lipgloss.NewStyle().Padding(0, appPaddingX)
+	boardPanelStyle = lipgloss.NewStyle().
+			Border(lipgloss.RoundedBorder()).
+			BorderForeground(lipgloss.Color("63"))
+	boardFocusPanelStyle = lipgloss.NewStyle().
+				Border(lipgloss.RoundedBorder()).
+				BorderForeground(lipgloss.Color("220"))
 	basePanelStyle = lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color("63")).
@@ -41,11 +48,12 @@ var (
 )
 
 type model struct {
-	session      *app.Session
-	input        textinput.Model
-	pieceCatalog *pieces.Catalog
-	focus        focusZone
-	helpExpanded bool
+	session       *app.Session
+	input         textinput.Model
+	pieceCatalog  *pieces.Catalog
+	focus         focusZone
+	helpExpanded  bool
+	moveLogScroll int
 }
 
 func Run(debugRenderer string) error {
@@ -61,6 +69,7 @@ func initialModel(debugRenderer string) model {
 	input.CharLimit = 64
 	input.Width = 48
 	input.Blur()
+	input.Cursor.SetMode(cursor.CursorStatic)
 
 	return model{
 		session:      session,
@@ -71,13 +80,14 @@ func initialModel(debugRenderer string) model {
 }
 
 func (m model) Init() tea.Cmd {
-	return textinput.Blink
+	return nil
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.session.Resize(msg.Width, msg.Height)
+		m.normalizeMoveLogScroll()
 		m.syncInput()
 		return m, nil
 	case tea.KeyMsg:
@@ -90,6 +100,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case tea.KeyTab:
 			m.toggleFocus()
+			m.normalizeMoveLogScroll()
 			m.syncInput()
 			return m, nil
 		case tea.KeyEsc:
@@ -97,11 +108,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.session.CancelTransient()
 				m.focus = focusBoard
 				m.input.SetValue("")
+				m.normalizeMoveLogScroll()
 				m.syncInput()
 				return m, nil
 			}
 			if m.focus == focusPrompt {
 				m.focus = focusBoard
+				m.normalizeMoveLogScroll()
 				m.syncInput()
 				return m, nil
 			}
@@ -115,6 +128,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if result.InputMode == app.InputModePromotion {
 					m.focus = focusPrompt
 				}
+				m.moveLogScroll = 0
+				m.normalizeMoveLogScroll()
 				m.syncInput()
 				return m, nil
 			}
@@ -127,6 +142,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if result.InputMode == app.InputModePromotion {
 				m.focus = focusPrompt
 			}
+			m.moveLogScroll = 0
+			m.normalizeMoveLogScroll()
 			m.syncInput()
 			return m, nil
 		}
@@ -134,9 +151,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "?":
 			m.helpExpanded = !m.helpExpanded
+			m.normalizeMoveLogScroll()
 			return m, nil
 		case ":":
 			m.focus = focusPrompt
+			m.normalizeMoveLogScroll()
 			m.syncInput()
 			return m, nil
 		}
@@ -150,6 +169,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
 		m.session.Preview(m.input.Value())
+		m.normalizeMoveLogScroll()
 		m.syncInput()
 		return m, cmd
 	}
@@ -162,15 +182,12 @@ func (m model) View() string {
 		return "Initializing TUI..."
 	}
 
-	fullLayout, ok := computeLayout(m.session.Width, m.session.Height)
+	fullLayout, ok := m.layout()
 	if !ok {
-		return m.padToViewport(appStyle.Render(m.renderConstraintView("viewport below full-layout threshold")))
+		return m.padToViewport(appStyle.Render(m.renderConstraintView("viewport below compact-layout threshold")))
 	}
 
 	rendered := appStyle.Render(m.renderFull(fullLayout))
-	if lipgloss.Width(rendered) > m.session.Width || lipgloss.Height(rendered) > m.session.Height {
-		return m.padToViewport(appStyle.Render(m.renderConstraintView("layout overflow detected after resize")))
-	}
 	return m.padToViewport(rendered)
 }
 
@@ -187,8 +204,18 @@ func (m model) handleBoardKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "u":
 		if m.session.InputMode == app.InputModeCommand {
 			m.session.Submit("undo")
+			m.moveLogScroll = 0
 		}
+	case "pgup":
+		m.scrollMoveLog(1)
+	case "pgdown":
+		m.scrollMoveLog(-1)
+	case "home":
+		m.scrollMoveLogToTop()
+	case "end":
+		m.moveLogScroll = 0
 	}
+	m.normalizeMoveLogScroll()
 	return m, nil
 }
 
@@ -196,13 +223,14 @@ func (m model) renderFull(layout layoutSpec) string {
 	header := headerStyle.Width(layout.UsableWidth).Render("SwapChess TUI")
 
 	boardPanel := m.renderBoardPanel(layout)
-	gamePanel := m.panel("Game State", strings.Join(m.gameLines(), "\n"), layout.RightWidth, gameBodyLines, false)
-	logPanel := m.panel("Move Log", strings.Join(m.recentMoveLines(layout.LogBodyLines), "\n"), layout.RightWidth, layout.LogBodyLines, false)
-	helpPanel := m.panel("Help", strings.Join(m.helpLines(), "\n"), layout.RightWidth, helpBodyLines, m.helpExpanded)
+	gamePanel := m.renderRightWrappedPanel("Game State", m.gameLines(layout.RightBodyWidth), layout.RightWidth, layout.GameBodyLines, false)
+	logPanel := m.renderRightPreparedPanel("Move Log", m.moveLogLines(layout.RightBodyWidth, layout.LogBodyLines), layout.RightWidth, layout.LogBodyLines, false)
+	helpPanel := m.renderRightWrappedPanel("Help", m.helpLines(layout.RightBodyWidth), layout.RightWidth, layout.HelpBodyLines, m.helpExpanded)
 	rightColumn := lipgloss.JoinVertical(lipgloss.Left, gamePanel, logPanel, helpPanel)
-
-	mainRow := lipgloss.JoinHorizontal(lipgloss.Top, boardPanel, strings.Repeat(" ", layoutGapWidth), rightColumn)
-	inputPanel := m.renderInputPanel(layout.UsableWidth)
+	mainRow := lipgloss.NewStyle().Width(layout.UsableWidth).Height(layout.MainHeight).Render(
+		lipgloss.JoinHorizontal(lipgloss.Top, boardPanel, strings.Repeat(" ", layoutGapWidth), rightColumn),
+	)
+	inputPanel := m.renderInputPanel(layout)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, mainRow, inputPanel)
 }
@@ -212,41 +240,32 @@ func (m model) renderConstraintView(reason string) string {
 	header := headerStyle.Width(usableWidth).Render("SwapChess TUI")
 
 	infoLines := []string{
-		"Full panel layout is temporarily disabled because the viewport is below the safe threshold.",
-		fmt.Sprintf("Current viewport: %dx%d", m.session.Width, m.session.Height),
+		"Full layout paused until the viewport is large enough.",
+		alignedRow("Viewport", fmt.Sprintf("%dx%d", m.session.Width, m.session.Height), 10),
 	}
 	minWidth, minHeight := minimumViewport()
 	infoLines = append(infoLines,
-		fmt.Sprintf("Required minimum: %dx%d", minWidth, minHeight),
-		"Reason: "+reason,
-		"Resize the terminal to restore the full synced layout.",
-		"Use --cli for a compact terminal mode.",
+		alignedRow("Required", fmt.Sprintf("%dx%d", minWidth, minHeight), 10),
+		alignedRow("Reason", reason, 10),
+		"Resize the terminal; the board stays left-anchored and drives the full HUD layout.",
 	)
 
-	infoBodyLines := maxInt(m.session.Height-1-(inputBodyLines+3)-3, 4)
-	infoPanel := m.panel("Viewport Constraints", strings.Join(infoLines, "\n"), usableWidth, infoBodyLines, true)
-	inputPanel := m.renderInputPanel(usableWidth)
+	contentWidth := maxInt(usableWidth-panelChromeWidth, 1)
+	infoBodyLines := maxInt(len(wrapPlainLines(infoLines, contentWidth)), 4)
+	infoPanel := m.renderWrappedPanel("Viewport Constraints", infoLines, usableWidth, infoBodyLines, true)
+	inputPanel := m.renderInputPanelForWidth(usableWidth)
 
 	return lipgloss.JoinVertical(lipgloss.Left, header, infoPanel, inputPanel)
 }
 
 func (m model) renderBoardPanel(layout layoutSpec) string {
 	options := rendertext.BoardOptions{
-		Cursor:   &m.session.Cursor,
-		Selected: m.session.SelectedSquare(),
+		Cursor:    &m.session.Cursor,
+		Selected:  m.session.SelectedSquare(),
+		CellWidth: layout.BoardCellWidth,
+		RowHeight: layout.BoardRowHeight,
 		Decorator: func(content string, file, rank int, square view.ViewSquare, selected, cursor bool) string {
-			style := lipgloss.NewStyle().Width(1).Align(lipgloss.Center)
-			switch {
-			case selected && cursor:
-				style = style.Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("160"))
-			case selected:
-				style = style.Bold(true).Foreground(lipgloss.Color("230")).Background(lipgloss.Color("94"))
-			case cursor && m.focus == focusBoard:
-				style = style.Bold(true).Foreground(lipgloss.Color("16")).Background(lipgloss.Color("220"))
-			case cursor:
-				style = style.Bold(true).Foreground(lipgloss.Color("220"))
-			}
-			return style.Render(content)
+			return rendertext.StyleBoardCell(content, file, rank, square, selected, cursor, m.focus == focusBoard)
 		},
 	}
 
@@ -254,88 +273,197 @@ func (m model) renderBoardPanel(layout layoutSpec) string {
 	if m.session.Renderer == app.RendererEngine {
 		board = rendertext.RenderEngineBoard(m.session.Game, m.pieceCatalog, options)
 	}
+	board = strings.TrimRight(board, "\n")
+	boardLines := strings.Split(board, "\n")
+	fillLines := maxInt(layout.MainHeight-layout.BoardOuterLines, 0)
+	for i := 0; i < fillLines; i++ {
+		boardLines = append(boardLines, "")
+	}
+	innerWidth := maxInt(layout.LeftWidth-boardPanelChromeWidth, 1)
+	board = lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(strings.Join(boardLines, "\n"))
 
-	return m.panel("Board", board, layout.LeftWidth, layout.BoardBodyLines, m.focus == focusBoard)
+	title := titleStyle.Render("Board")
+	if m.focus == focusBoard {
+		title = titleStyle.Foreground(lipgloss.Color("220")).Render("Board")
+	}
+	title = lipgloss.NewStyle().Width(innerWidth).Align(lipgloss.Center).Render(title)
+	style := boardPanelStyle
+	if m.focus == focusBoard {
+		style = boardFocusPanelStyle
+	}
+	return style.Width(maxInt(layout.LeftWidth-boardPanelChromeWidth, 1)).Render(title + "\n" + board)
 }
 
-func (m model) renderInputPanel(width int) string {
+func (m model) gameFields() []infoField {
+	fields := []infoField{
+		{Label: "Turn", Value: m.session.View.Turn.String()},
+		{Label: "Status", Value: rendertext.StatusLabel(m.session.View.Status)},
+		{Label: "Cursor", Value: app.PositionString(m.session.Cursor)},
+		{Label: "Select", Value: m.selectedLabel()},
+		{Label: "Last", Value: m.session.LastMoveNotation()},
+		{Label: "Castle", Value: castlingLabel(m.session.View.CastlingRights)},
+	}
+	if m.session.DebugRendererEnabled {
+		fields = append(fields, infoField{Label: "Render", Value: string(m.session.Renderer)})
+	}
+	return fields
+}
+
+func (m model) gameLines(bodyWidth int) []string {
+	return formatInfoLines(m.gameFields(), 6, bodyWidth)
+}
+
+func (m model) helpFields() []infoField {
+	fields := []infoField{
+		{Label: "Tab", Value: "focus"},
+		{Label: ":", Value: "prompt"},
+		{Label: "Enter", Value: "select"},
+		{Label: "Esc", Value: "back"},
+		{Label: "u", Value: "undo"},
+		{Label: "?", Value: "help"},
+	}
+	if m.helpExpanded {
+		fields = append(fields,
+			infoField{Label: "Move", Value: "arrows"},
+			infoField{Label: "Log", Value: "PgUp/PgDn"},
+			infoField{Label: "Type", Value: "prompt"},
+		)
+		if m.session.DebugRendererEnabled {
+			fields = append(fields, infoField{Label: "Debug", Value: "renderer view / engine"})
+		} else {
+			fields = append(fields, infoField{Label: "Alt", Value: "h j k l also move"})
+		}
+	}
+	return fields
+}
+
+func (m model) helpLines(bodyWidth int) []string {
+	return formatInfoLines(m.helpFields(), 5, bodyWidth)
+}
+
+func (m model) moveLogLines(bodyWidth, limitLines int) []string {
+	wrapped := m.wrappedMoveLogLines(bodyWidth)
+	if len(wrapped) == 0 {
+		return []string{"No moves yet."}
+	}
+	if limitLines <= 0 {
+		return []string{wrapped[len(wrapped)-1]}
+	}
+	maxOffset := maxInt(len(wrapped)-limitLines, 0)
+	offset := m.moveLogScroll
+	if offset > maxOffset {
+		offset = maxOffset
+	}
+	end := len(wrapped) - offset
+	start := maxInt(end-limitLines, 0)
+	return wrapped[start:end]
+}
+
+func (m model) moveLogEntries() []string {
+	if len(m.session.MoveLog) == 0 {
+		return nil
+	}
+
+	fullMoves := make([]string, 0, (len(m.session.MoveLog)+1)/2)
+	for i := 0; i < len(m.session.MoveLog); i += 2 {
+		fullMoveNumber := (i / 2) + 1
+		white := formatMoveRecord(m.session.MoveLog[i])
+		line := fmt.Sprintf("%02d. %s", fullMoveNumber, white)
+		if i+1 < len(m.session.MoveLog) {
+			line += "  " + formatMoveRecord(m.session.MoveLog[i+1])
+		}
+		fullMoves = append(fullMoves, line)
+	}
+
+	return fullMoves
+}
+
+func (m model) wrappedMoveLogLines(bodyWidth int) []string {
+	entries := m.moveLogEntries()
+	if len(entries) == 0 {
+		return nil
+	}
+	return wrapPlainLines(entries, bodyWidth)
+}
+
+func (m model) renderInputPanel(layout layoutSpec) string {
+	bodyWidth := maxInt(layout.UsableWidth-panelChromeWidth, 1)
+	highlight := m.focus == focusPrompt || m.session.InputMode == app.InputModePromotion
+	return m.renderPreparedPanel("Command Line", wrapMixedLines(m.inputPanelLines(), bodyWidth), layout.UsableWidth, layout.InputBodyLines, highlight)
+}
+
+func (m model) renderInputPanelForWidth(width int) string {
+	bodyWidth := maxInt(width-panelChromeWidth, 1)
+	bodyLines := measureMixedLines(m.inputMeasureLines(), bodyWidth)
+	highlight := m.focus == focusPrompt || m.session.InputMode == app.InputModePromotion
+	return m.renderPreparedPanel("Command Line", wrapMixedLines(m.inputPanelLines(), bodyWidth), width, bodyLines, highlight)
+}
+
+func (m model) inputPanelLines() []string {
 	prompt := m.session.PromptLabel() + "> " + m.input.View()
-	body := strings.Join([]string{
-		"Input mode: " + m.session.ModeLabel() + " | Focus: " + string(m.focus),
+	return []string{
+		alignedDualRow("Mode", m.session.ModeLabel(), "Focus", string(m.focus), 7),
 		m.session.Message,
 		"Hint: " + m.session.Hint,
 		prompt,
-	}, "\n")
-
-	highlight := m.focus == focusPrompt || m.session.InputMode == app.InputModePromotion
-	return m.panel("Command Line", body, width, inputBodyLines, highlight)
+	}
 }
 
-func (m model) gameLines() []string {
-	lines := []string{
-		fmt.Sprintf("Turn: %s", m.session.View.Turn.String()),
-		fmt.Sprintf("Status: %s", rendertext.StatusLabel(m.session.View.Status)),
-		fmt.Sprintf("Cursor: %s", app.PositionString(m.session.Cursor)),
-		fmt.Sprintf("Selected: %s", m.selectedLabel()),
-		fmt.Sprintf("Last move: %s", m.session.LastMoveNotation()),
-		fmt.Sprintf("Castling: %s", castlingLabel(m.session.View.CastlingRights)),
-		fmt.Sprintf("Swap suppressed: %t", m.session.View.SuppressNextSwap),
+func (m model) inputMeasureLines() []string {
+	promptText := m.input.Value()
+	if promptText == "" {
+		promptText = m.session.PromptPlaceholder()
 	}
-	if m.session.DebugRendererEnabled {
-		lines = append(lines, "Renderer: "+string(m.session.Renderer))
+	return []string{
+		alignedDualRow("Mode", m.session.ModeLabel(), "Focus", string(m.focus), 7),
+		m.session.Message,
+		"Hint: " + m.session.Hint,
+		m.session.PromptLabel() + "> " + promptText,
 	}
-	return lines
 }
 
-func (m model) recentMoveLines(limit int) []string {
-	if len(m.session.MoveLog) == 0 {
-		return []string{"No moves yet."}
+func (m model) layoutContent() layoutContent {
+	return layoutContent{
+		GameLines:  m.gameLines(preferredRightBodyWidth),
+		LogLines:   []string{"01. e2e4  e7e5", "02. g1f3  b8c6", "03. f1b5  a7a6", "04. b5a4  g8f6"},
+		HelpLines:  m.helpLines(preferredRightBodyWidth),
+		InputLines: m.inputMeasureLines(),
 	}
-	start := len(m.session.MoveLog) - limit
-	if start < 0 {
-		start = 0
-	}
-
-	lines := make([]string, 0, len(m.session.MoveLog[start:]))
-	for _, record := range m.session.MoveLog[start:] {
-		line := fmt.Sprintf("%02d. %-5s %s", record.Index, record.Player.String(), record.Notation)
-		if record.SwapEvent != nil {
-			line += fmt.Sprintf(" [%s<->%s]", app.PositionString(record.SwapEvent.A), app.PositionString(record.SwapEvent.B))
-		}
-		lines = append(lines, line)
-	}
-	return lines
 }
 
-func (m model) helpLines() []string {
-	lines := []string{
-		"Tab: switch focus",
-		": : focus prompt",
-		"Enter: select or submit",
-		"Esc: cancel/back",
-		"u: undo from board",
-		"Ctrl+C: quit",
-	}
-	if m.helpExpanded {
-		lines = append(lines, "Arrows or h/j/k/l: move board cursor")
-		lines = append(lines, "Type moves directly in the prompt")
-		if m.session.DebugRendererEnabled {
-			lines = append(lines, "Debug: renderer view|engine|toggle")
-		}
-	}
-	return lines
+func (m model) layout() (layoutSpec, bool) {
+	return computeLayoutForContent(m.session.Width, m.session.Height, m.layoutContent())
 }
 
-func (m model) panel(title, body string, width, bodyLines int, focused bool) string {
-	head := titleStyle.Render(title)
-	renderWidth := maxInt(width-2, 1)
-	body = clipMultiline(body, maxInt(renderWidth-2, 8))
-	body = trimAndPadLines(body, bodyLines)
+func (m model) renderWrappedPanel(title string, lines []string, width, bodyLines int, focused bool) string {
+	contentWidth := maxInt(width-panelChromeWidth, 1)
+	return m.renderPreparedPanel(title, wrapPlainLines(lines, contentWidth), width, bodyLines, focused)
+}
+
+func (m model) renderPreparedPanel(title string, lines []string, width, bodyLines int, focused bool) string {
+	return m.renderPreparedPanelAligned(title, lines, width, bodyLines, focused, lipgloss.Left)
+}
+
+func (m model) renderRightWrappedPanel(title string, lines []string, width, bodyLines int, focused bool) string {
+	contentWidth := maxInt(width-panelChromeWidth, 1)
+	return m.renderRightPreparedPanel(title, wrapPlainLines(lines, contentWidth), width, bodyLines, focused)
+}
+
+func (m model) renderRightPreparedPanel(title string, lines []string, width, bodyLines int, focused bool) string {
+	return m.renderPreparedPanelAligned(title, lines, width, bodyLines, focused, lipgloss.Left)
+}
+
+func (m model) renderPreparedPanelAligned(title string, lines []string, width, bodyLines int, focused bool, alignment lipgloss.Position) string {
+	contentWidth := maxInt(width-panelChromeWidth, 1)
+	prepared := fitLines(lines, bodyLines)
+	prepared = alignLines(prepared, contentWidth, alignment)
 	style := basePanelStyle
 	if focused {
 		style = focusPanelStyle
 	}
-	return style.Width(renderWidth).Render(head + "\n" + body)
+	head := titleStyle.Width(contentWidth).Align(alignment).Render(title)
+	body := strings.Join(prepared, "\n")
+	return style.Width(maxInt(width-panelBorderWidth, 1)).Render(head + "\n" + body)
 }
 
 func (m *model) syncInput() {
@@ -352,11 +480,23 @@ func (m *model) syncInput() {
 		m.input.CharLimit = 64
 	}
 
-	width := m.session.Width - 12
+	promptPrefix := m.session.PromptLabel() + "> "
+	bodyWidth := 48
+	if layout, ok := m.layout(); ok {
+		bodyWidth = layout.UsableWidth - panelChromeWidth
+	} else if m.session.Width == 0 {
+		bodyWidth = 48
+	} else {
+		bodyWidth = m.session.Width - (appPaddingX * 2) - panelChromeWidth
+	}
+	width := bodyWidth - lipgloss.Width(promptPrefix)
 	if width < 12 {
 		width = 12
 	}
 	m.input.Width = width
+	for m.input.Width > 12 && lipgloss.Width(promptPrefix+m.input.View()) > bodyWidth {
+		m.input.Width--
+	}
 }
 
 func (m *model) toggleFocus() {
@@ -365,6 +505,38 @@ func (m *model) toggleFocus() {
 		return
 	}
 	m.focus = focusBoard
+}
+
+func (m *model) normalizeMoveLogScroll() {
+	layout, ok := m.layout()
+	if !ok {
+		m.moveLogScroll = 0
+		return
+	}
+	maxOffset := maxInt(len(m.wrappedMoveLogLines(layout.RightBodyWidth))-layout.LogBodyLines, 0)
+	if m.moveLogScroll < 0 {
+		m.moveLogScroll = 0
+	}
+	if m.moveLogScroll > maxOffset {
+		m.moveLogScroll = maxOffset
+	}
+}
+
+func (m *model) scrollMoveLog(direction int) {
+	layout, ok := m.layout()
+	if !ok {
+		return
+	}
+	page := maxInt(layout.LogBodyLines-1, 1)
+	m.moveLogScroll += direction * page
+}
+
+func (m *model) scrollMoveLogToTop() {
+	layout, ok := m.layout()
+	if !ok {
+		return
+	}
+	m.moveLogScroll = maxInt(len(m.wrappedMoveLogLines(layout.RightBodyWidth))-layout.LogBodyLines, 0)
 }
 
 func (m model) padToViewport(rendered string) string {
@@ -404,38 +576,142 @@ func castlingLabel(rights view.CastlingRights) string {
 	return fmt.Sprintf("W:%s B:%s", white, black)
 }
 
-func clipMultiline(value string, width int) string {
-	lines := strings.Split(value, "\n")
-	for i, line := range lines {
-		lines[i] = clipLine(line, width)
-	}
-	return strings.Join(lines, "\n")
+func alignedRow(label, value string, labelWidth int) string {
+	return fmt.Sprintf("%-*s %s", labelWidth, label, value)
 }
 
-func trimAndPadLines(value string, lines int) string {
-	if lines <= 0 {
-		return ""
-	}
-	parts := strings.Split(value, "\n")
-	if len(parts) > lines {
-		parts = parts[:lines]
-	}
-	for len(parts) < lines {
-		parts = append(parts, "")
-	}
-	return strings.Join(parts, "\n")
+func alignedDualRow(leftLabel, leftValue, rightLabel, rightValue string, labelWidth int) string {
+	left := alignedRow(leftLabel, leftValue, labelWidth)
+	right := alignedRow(rightLabel, rightValue, labelWidth)
+	return left + "   " + right
 }
 
-func clipLine(value string, width int) string {
-	if width <= 0 || lipgloss.Width(value) <= width {
-		return value
+func formatMoveRecord(record app.MoveRecord) string {
+	move := record.Notation
+	if record.SwapEvent == nil {
+		return move
 	}
-	runes := []rune(value)
-	if len(runes) <= width {
-		return value
+	return fmt.Sprintf("%s [%s<->%s]", move, app.PositionString(record.SwapEvent.A), app.PositionString(record.SwapEvent.B))
+}
+
+func wrapPlainLines(lines []string, width int) []string {
+	wrapped := make([]string, 0, len(lines))
+	for _, line := range lines {
+		wrapped = append(wrapped, wrapPlainLine(line, width)...)
 	}
-	if width == 1 {
-		return string(runes[:1])
+	return wrapped
+}
+
+func wrapMixedLines(lines []string, width int) []string {
+	wrapped := make([]string, 0, len(lines))
+	for idx, line := range lines {
+		if idx == len(lines)-1 {
+			wrapped = append(wrapped, line)
+			continue
+		}
+		wrapped = append(wrapped, wrapPlainLine(line, width)...)
 	}
-	return string(runes[:width-1]) + "..."
+	return wrapped
+}
+
+func measureMixedLines(lines []string, width int) int {
+	return len(wrapMixedLines(lines, width))
+}
+
+func wrapPlainLine(line string, width int) []string {
+	if width <= 0 || lipgloss.Width(line) <= width {
+		return []string{line}
+	}
+
+	words := strings.Fields(line)
+	if len(words) == 0 {
+		return []string{""}
+	}
+
+	lines := make([]string, 0, 2)
+	current := words[0]
+	for _, word := range words[1:] {
+		candidate := current + " " + word
+		if lipgloss.Width(candidate) <= width {
+			current = candidate
+			continue
+		}
+		lines = append(lines, current)
+		current = word
+	}
+	lines = append(lines, current)
+	return lines
+}
+
+func padLines(lines []string, minLines int) []string {
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	for len(lines) < minLines {
+		lines = append(lines, "")
+	}
+	return lines
+}
+
+func fitLines(lines []string, bodyLines int) []string {
+	if bodyLines <= 0 {
+		return []string{""}
+	}
+	lines = padLines(lines, bodyLines)
+	if len(lines) > bodyLines {
+		return lines[:bodyLines]
+	}
+	return lines
+}
+
+func alignLines(lines []string, width int, alignment lipgloss.Position) []string {
+	if width <= 0 {
+		return lines
+	}
+	if alignment == lipgloss.Left {
+		return lines
+	}
+	aligned := make([]string, 0, len(lines))
+	style := lipgloss.NewStyle().Width(width).Align(alignment)
+	for _, line := range lines {
+		aligned = append(aligned, style.Render(line))
+	}
+	return aligned
+}
+
+type infoField struct {
+	Label string
+	Value string
+}
+
+func formatInfoLines(fields []infoField, labelWidth, bodyWidth int) []string {
+	if bodyWidth <= 0 {
+		return formatInfoMeasureLines(fields, labelWidth)
+	}
+
+	lines := make([]string, 0, len(fields))
+	for i := 0; i < len(fields); {
+		left := alignedRow(fields[i].Label, fields[i].Value, labelWidth)
+		if i+1 < len(fields) {
+			right := alignedRow(fields[i+1].Label, fields[i+1].Value, labelWidth)
+			dual := left + "   " + right
+			if lipgloss.Width(dual) <= bodyWidth {
+				lines = append(lines, dual)
+				i += 2
+				continue
+			}
+		}
+		lines = append(lines, left)
+		i++
+	}
+
+	return lines
+}
+
+func formatInfoMeasureLines(fields []infoField, labelWidth int) []string {
+	lines := make([]string, 0, len(fields))
+	for _, field := range fields {
+		lines = append(lines, alignedRow(field.Label, field.Value, labelWidth))
+	}
+	return lines
 }

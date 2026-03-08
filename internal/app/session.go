@@ -31,10 +31,11 @@ const (
 )
 
 type ActionResult struct {
-	Quit      bool
-	Message   string
-	Hint      string
-	InputMode InputMode
+	Quit       bool
+	Message    string
+	Hint       string
+	InputMode  InputMode
+	ClearInput bool
 }
 
 type MoveRecord struct {
@@ -109,15 +110,16 @@ func (s *Session) Preview(raw string) string {
 func (s *Session) Submit(raw string) ActionResult {
 	value := strings.TrimSpace(raw)
 	if value == "" {
-		if s.InputMode == InputModePromotion {
+		switch s.InputMode {
+		case InputModePromotion:
 			s.Message = "Promotion required. Enter q, r, b, or n."
-		} else if s.InputMode == InputModeBoardSelect {
-			s.Message = "Board selection is active. Choose a destination or press Esc."
-		} else {
+		case InputModeBoardSelect:
+			s.Message = "Selection active. Pick destination or Esc."
+		default:
 			s.Message = "Empty input. Enter a move like e2e4 or a command."
 		}
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, false)
 	}
 
 	if s.InputMode == InputModePromotion {
@@ -125,7 +127,7 @@ func (s *Session) Submit(raw string) ActionResult {
 		if !ok {
 			s.Message = "Promotion required: enter q, r, b, or n."
 			s.Hint = s.Preview(value)
-			return s.result(false)
+			return s.result(false, false)
 		}
 		move := s.pendingMove
 		move.Promotion = pk
@@ -141,7 +143,7 @@ func (s *Session) Submit(raw string) ActionResult {
 	case "help", "?":
 		s.Message = "Commands: " + strings.Join(s.HelpLines(), " | ")
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, true)
 	case "undo", "u":
 		return s.undo()
 	case "clear":
@@ -151,11 +153,11 @@ func (s *Session) Submit(raw string) ActionResult {
 		s.refreshView()
 		s.Message = "Move log cleared."
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, true)
 	case "quit", "exit":
 		s.Message = "Quitting."
 		s.Hint = s.Preview("")
-		return s.result(true)
+		return s.result(true, true)
 	case "renderer view", "render view", "view":
 		return s.setRenderer(RendererView)
 	case "renderer engine", "render engine", "engine":
@@ -168,27 +170,30 @@ func (s *Session) Submit(raw string) ActionResult {
 	if err != nil {
 		s.Message = "Parse error: " + err.Error()
 		s.Hint = s.Preview(value)
-		return s.result(false)
+		return s.result(false, false)
 	}
 	return s.submitMove(move)
 }
 
 func (s *Session) CancelTransient() ActionResult {
+	clearInput := false
 	switch s.InputMode {
 	case InputModePromotion:
 		s.InputMode = InputModeCommand
 		s.hasPendingMove = false
 		s.pendingMove = engine.Move{}
 		s.Message = "Promotion cancelled."
+		clearInput = true
 	case InputModeBoardSelect:
 		s.InputMode = InputModeCommand
 		s.Selected = nil
 		s.Message = "Selection cleared."
+		clearInput = true
 	default:
 		s.Message = "Nothing to cancel."
 	}
 	s.Hint = s.Preview("")
-	return s.result(false)
+	return s.result(false, clearInput)
 }
 
 func (s *Session) MoveCursor(df, dr int) {
@@ -200,7 +205,7 @@ func (s *Session) ActivateCursor() ActionResult {
 	if s.InputMode == InputModePromotion {
 		s.Message = "Promotion is pending. Enter q, r, b, or n in the prompt."
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, false)
 	}
 
 	cursor := s.Cursor
@@ -209,19 +214,19 @@ func (s *Session) ActivateCursor() ActionResult {
 		if piece == nil {
 			s.Message = "No piece at " + PositionString(cursor) + "."
 			s.Hint = s.Preview("")
-			return s.result(false)
+			return s.result(false, false)
 		}
 		if piece.Color != s.Game.Turn {
 			s.Message = "Select one of your own pieces."
 			s.Hint = s.Preview("")
-			return s.result(false)
+			return s.result(false, false)
 		}
 		selected := cursor
 		s.Selected = &selected
 		s.InputMode = InputModeBoardSelect
-		s.Message = fmt.Sprintf("Selected %s at %s. Choose a destination or press Esc.", strings.ToLower(piece.Kind.String()), PositionString(cursor))
+		s.Message = fmt.Sprintf("Selected %s %s. Choose destination or Esc.", strings.ToLower(piece.Kind.String()), PositionString(cursor))
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, false)
 	}
 
 	from := *s.Selected
@@ -230,7 +235,7 @@ func (s *Session) ActivateCursor() ActionResult {
 		s.InputMode = InputModeCommand
 		s.Message = "Selection cleared."
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, false)
 	}
 
 	move := engine.Move{From: from, To: cursor}
@@ -308,7 +313,7 @@ func (s *Session) preview(raw string) string {
 		return "Invalid promotion piece. Valid values: q, r, b, n."
 	case InputModeBoardSelect:
 		if value == "" {
-			return "Board selection active. Choose a destination on the board, type a move directly, or press Esc."
+			return "Select destination, type move, or Esc."
 		}
 	}
 
@@ -350,7 +355,7 @@ func (s *Session) submitMove(move engine.Move) ActionResult {
 	if err := validateMoveContext(s.Game, move); err != nil {
 		s.Message = "Invalid move context: " + err.Error()
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, false)
 	}
 
 	piece := s.Game.Board.Squares[move.From.File][move.From.Rank]
@@ -362,7 +367,7 @@ func (s *Session) submitMove(move engine.Move) ActionResult {
 				s.hasPendingMove = true
 				s.Message = "Promotion required for " + MoveString(move) + ". Enter q/r/b/n."
 				s.Hint = s.Preview("")
-				return s.result(false)
+				return s.result(false, true)
 			}
 		}
 	}
@@ -378,7 +383,7 @@ func (s *Session) applyMove(move engine.Move) ActionResult {
 	if err := engine.ApplyMove(s.Game, move); err != nil {
 		s.Message = "Illegal move: " + err.Error()
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, false)
 	}
 
 	s.history = append(s.history, previous)
@@ -408,14 +413,14 @@ func (s *Session) applyMove(move engine.Move) ActionResult {
 		s.Message = "Move applied: " + record.Notation
 	}
 	s.Hint = s.Preview("")
-	return s.result(false)
+	return s.result(false, true)
 }
 
 func (s *Session) undo() ActionResult {
 	if len(s.history) == 0 {
 		s.Message = "No moves to undo."
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, false)
 	}
 
 	last := s.history[len(s.history)-1]
@@ -442,26 +447,26 @@ func (s *Session) undo() ActionResult {
 	s.refreshView()
 	s.Message = "Undid last move."
 	s.Hint = s.Preview("")
-	return s.result(false)
+	return s.result(false, true)
 }
 
 func (s *Session) setRenderer(mode RendererMode) ActionResult {
 	if !s.DebugRendererEnabled {
 		s.Message = "Renderer commands are disabled unless launched with --debug-renderer."
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, false)
 	}
 	s.Renderer = mode
 	s.Message = "Renderer: " + string(mode)
 	s.Hint = s.Preview("")
-	return s.result(false)
+	return s.result(false, true)
 }
 
 func (s *Session) toggleRenderer() ActionResult {
 	if !s.DebugRendererEnabled {
 		s.Message = "Renderer commands are disabled unless launched with --debug-renderer."
 		s.Hint = s.Preview("")
-		return s.result(false)
+		return s.result(false, false)
 	}
 	if s.Renderer == RendererView {
 		return s.setRenderer(RendererEngine)
@@ -476,12 +481,13 @@ func (s *Session) refreshView() {
 	})
 }
 
-func (s *Session) result(quit bool) ActionResult {
+func (s *Session) result(quit, clearInput bool) ActionResult {
 	return ActionResult{
-		Quit:      quit,
-		Message:   s.Message,
-		Hint:      s.Hint,
-		InputMode: s.InputMode,
+		Quit:       quit,
+		Message:    s.Message,
+		Hint:       s.Hint,
+		InputMode:  s.InputMode,
+		ClearInput: clearInput,
 	}
 }
 
