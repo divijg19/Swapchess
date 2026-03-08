@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests
+        run: go test ./...
+
+      - name: Build release artifacts
+        run: ./scripts/build_release_artifacts.sh "${GITHUB_REF_NAME}"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: swapchess-${{ github.ref_name }}
+          path: |
+            bin/releases/${{ github.ref_name }}/swapchess_*
+            bin/releases/${{ github.ref_name }}/SHA256SUMS.txt
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            bin/releases/${{ github.ref_name }}/swapchess_*
+            bin/releases/${{ github.ref_name }}/SHA256SUMS.txt
+          fail_on_unmatched_files: true

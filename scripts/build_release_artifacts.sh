@@ -19,6 +19,8 @@ TARGETS=(
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}"
 
+ARCHIVES=()
+
 for target in "${TARGETS[@]}"; do
   read -r GOOS GOARCH <<<"${target}"
   TARGET_DIR="${DIST_DIR}/${GOOS}-${GOARCH}"
@@ -38,11 +40,23 @@ for target in "${TARGETS[@]}"; do
       -o "${TARGET_DIR}/${OUTPUT_NAME}" \
       "${PACKAGE}"
   )
+
+  if [ "${GOOS}" = "windows" ]; then
+    ARCHIVE_PATH="${DIST_DIR}/swapchess_${VERSION}_${GOOS}_${GOARCH}.zip"
+    (
+      cd "${TARGET_DIR}"
+      zip -q -r "${ARCHIVE_PATH}" .
+    )
+  else
+    ARCHIVE_PATH="${DIST_DIR}/swapchess_${VERSION}_${GOOS}_${GOARCH}.tar.gz"
+    tar -C "${TARGET_DIR}" -czf "${ARCHIVE_PATH}" .
+  fi
+  ARCHIVES+=("${ARCHIVE_PATH}")
 done
 
 (
   cd "${DIST_DIR}"
-  sha256sum ./*/* > SHA256SUMS.txt
+  sha256sum "${ARCHIVES[@]}" | sed "s#${DIST_DIR}/##" > SHA256SUMS.txt
 )
 
 echo "Release artifacts written to ${DIST_DIR}"
