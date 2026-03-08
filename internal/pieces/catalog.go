@@ -55,11 +55,11 @@ func (c *Catalog) GlyphFor(kind engine.PieceKind, color engine.Color) string {
 func defaultGlyphs() map[string]string {
 	return map[string]string{
 		"w_pawn":   "♙",
-		"w_knight": "♘",
-		"w_bishop": "♗",
-		"w_rook":   "♖",
-		"w_queen":  "♕",
-		"w_king":   "♔",
+		"w_knight": "♞",
+		"w_bishop": "♝",
+		"w_rook":   "♜",
+		"w_queen":  "♛",
+		"w_king":   "♚",
 		"b_pawn":   "♟",
 		"b_knight": "♞",
 		"b_bishop": "♝",

@@ -213,7 +213,7 @@ func TestActivateCursorSelectionAndMove(t *testing.T) {
 	if selected := session.SelectedSquare(); selected == nil || *selected != (engine.Position{File: 4, Rank: 1}) {
 		t.Fatalf("expected e2 to be selected, got %+v", selected)
 	}
-	if !strings.Contains(session.Message, "Selected pawn at e2.") {
+	if !strings.Contains(session.Message, "Selected pawn e2.") {
 		t.Fatalf("unexpected selection message: %q", session.Message)
 	}
 
